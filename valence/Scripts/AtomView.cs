@@ -17,6 +17,7 @@ public partial class AtomView : Node3D
     private MeshInstance3D? _cloud;
     private Label3D? _label;
     private Color _labelColor;
+    private float _labelRange = 70f;
 
     public AtomData? Data { get; private set; }
 
@@ -103,6 +104,22 @@ public partial class AtomView : Node3D
         {
             _label.Modulate = focused ? Colors.White : dimmed ? _labelColor.Darkened(0.55f) : _labelColor;
         }
+    }
+
+    /// <summary>Camera distance under which the system's name shows (smaller for big graphs).</summary>
+    public void SetLabelRange(float range)
+    {
+        _labelRange = range;
+        if (_label != null) _label.VisibilityRangeEnd = range;
+    }
+
+    /// <param name="pinned">Always show the name (focused, connected to the selection, simulated).</param>
+    /// <param name="exclusive">A selection is active: hide names that aren't pinned.</param>
+    public void SetLabelPinned(bool pinned, bool exclusive)
+    {
+        if (_label == null) return;
+        _label.VisibilityRangeEnd = pinned ? 0f : _labelRange;
+        _label.Visible = pinned || !exclusive;
     }
 
     /// <summary>0 = packed nucleus with orbits; 1 = opened to <paramref name="openRadius"/>.</summary>

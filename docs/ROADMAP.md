@@ -12,15 +12,14 @@ It never clones, builds, runs, records or writes to the repo.
    wiring (`raises`/`triggers`), confidence on edges, entry points. The C# probe fills all of it,
    including Godot callbacks and signals.
 
+4. **Simulation** (static): flow downstream/upstream from a selected class, the game loop
+   (frame/physics/draw entry points, repeating), and any other trigger, with pause, speed, heat
+   and a trail. Labels appear on zoom, or for the selection and everything connected to it.
+
 ## Next
 
-4. **Simulation**
-   - *Flow from selection*: pick a class or method; pulses travel downstream (what it reaches) or
-     upstream (what reaches it) along member edges, in call order, hop by hop.
-   - *Triggers*: play a `frame` tick (every `_Process`/`_PhysicsProcess`), a `startup`, an `event`
-     handler chain, or later a web `request`, and watch the flow through the codebase. Heat
-     accumulates on the busiest paths. Virtual/interface calls fan out as "maybe" links.
-   - Godot scene files (`.tscn`): attached scripts and signal connections as wiring.
+- Godot scene files (`.tscn`): attached scripts and signal connections as wiring.
+- Method-level selection (flow from one method rather than a whole class).
 5. **Tree-sitter engine**: one embedded parser library with bundled grammars so new languages run
    in-process with no language runtimes installed, plus per-language name resolution and
    data-driven *framework packs* (entry points and event conventions).

@@ -52,6 +52,35 @@ public static class InfoText
         return sb.ToString();
     }
 
+    public static string ForSimulation(FlowPlan plan, int tick, bool loop, IReadOnlyDictionary<NodeData, int> visits, GraphModel model)
+    {
+        var sb = new StringBuilder();
+        sb.Append("[font_size=20][b]Simulation[/b][/font_size]\n");
+        sb.Append($"{Esc(plan.Title)}\n");
+        sb.Append($"[color={Muted}]{(loop ? $"tick {tick}, repeating" : tick > 1 ? $"run {tick}" : "single run")}[/color]\n\n");
+        sb.Append($"{plan.Events.Count} pulses per run · {plan.Reached} points reached · {visits.Count} classes lit so far\n");
+        if (plan.Truncated) sb.Append($"[color={Palette.Html(Palette.Covalent)}]Very large flow: capped at {plan.Events.Count} pulses.[/color]\n");
+
+        sb.Append("\n[b]Pulses[/b]  ");
+        sb.Append(string.Join("  ", Palette.FlowLegend.Select(kv => $"[color={Palette.Html(kv.Value)}]●[/color] {kv.Key}")));
+        sb.Append('\n');
+
+        var busiest = visits.OrderByDescending(kv => kv.Value).ThenBy(kv => kv.Key.Info.Name).Take(25).ToList();
+        if (busiest.Count > 0)
+        {
+            sb.Append("\n[b]Busiest classes[/b]\n");
+            foreach (var (node, count) in busiest)
+            {
+                sb.Append($"{NodeLink(node)} [color={Muted}]×{count} · {Esc(node.Atom.ShortName)}[/color]\n");
+            }
+        }
+
+        sb.Append($"\n[color={Muted}]Static simulation: what the code can do, not a recording of a run. " +
+                  "Smaller, dimmer pulses are \"likely\" links (virtual/interface dispatch, events). " +
+                  "Space pause/resume · Esc or Simulate ▸ Stop to clear.[/color]\n");
+        return sb.ToString();
+    }
+
     public static string ForNode(NodeData node, GraphModel model)
     {
         var info = node.Info;

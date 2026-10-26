@@ -27,7 +27,16 @@ public partial class Hud : Control
     private const int NavigateClear = 42;
     private const int HelpControls = 60;
     private const int HelpAbout = 61;
+    private const int SimDownstream = 80;
+    private const int SimUpstream = 81;
+    private const int SimGameLoop = 82;
+    private const int SimPause = 86;
+    private const int SimStop = 87;
+    private const int SimData = 88;
+    private const int TriggerBase = 100;
     private const int RecentBase = 1000;
+
+    private static readonly float[] Speeds = { 0.25f, 0.5f, 1f, 2f, 4f };
 
     private static readonly (ColorMode Mode, string Label)[] ColorModes =
     {
@@ -38,6 +47,10 @@ public partial class Hud : Control
     };
 
     private readonly List<string> _recentFolders = new();
+    private readonly List<string> _triggers = new();
+    private PopupMenu? _simulateMenu;
+    private PopupMenu? _triggerMenu;
+    private PopupMenu? _speedMenu;
     private PopupMenu? _fileMenu;
     private PopupMenu? _viewMenu;
     private PopupMenu? _recentMenu;
@@ -72,6 +85,13 @@ public partial class Hud : Control
     public event Action? BackRequested;
     public event Action? ClearSelectionRequested;
     public event Action<string, bool>? EdgeKindToggled;
+    public event Action<FlowDirection>? FlowRequested;
+    public event Action? GameLoopRequested;
+    public event Action<string>? TriggerRequested;
+    public event Action? PauseToggleRequested;
+    public event Action? StopSimulationRequested;
+    public event Action<float>? SpeedChanged;
+    public event Action<bool>? IncludeDataChanged;
 
     /// <summary>A "node:" / "atom:" link was clicked in the inspector or picked in the outline.</summary>
     public event Action<string>? LinkClicked;
@@ -128,6 +148,9 @@ public partial class Hud : Control
         SetChecked(_viewMenu, ViewLegend, showLegend);
         SetColorMode(ColorMode.Visibility);
         SetLinkDepth(1);
+        SetSpeed(1f);
+        SetSimulationState(false, false);
+        SetTriggers(Array.Empty<(string, int)>(), false);
     }
 
     // ---------------------------------------------------------------- public API
@@ -169,6 +192,40 @@ public partial class Hud : Control
             return;
         }
         for (var i = 0; i < _recentFolders.Count; i++) _recentMenu.AddItem(_recentFolders[i], RecentBase + i);
+    }
+
+    /// <summary>Fills Simulate ▸ Play Trigger with the entry-point triggers this graph has, e.g. "request (4)".</summary>
+    public void SetTriggers(IEnumerable<(string Trigger, int Count)> triggers, bool hasGameLoop)
+    {
+        _triggers.Clear();
+        SetDisabled(_simulateMenu, SimGameLoop, !hasGameLoop);
+        if (_triggerMenu == null) return;
+        _triggerMenu.Clear();
+        foreach (var (trigger, count) in triggers)
+        {
+            _triggerMenu.AddItem($"{trigger} ({count})", TriggerBase + _triggers.Count);
+            _triggers.Add(trigger);
+        }
+        if (_triggers.Count == 0)
+        {
+            _triggerMenu.AddItem("(no entry points; re-analyze the source)", TriggerBase - 1);
+            _triggerMenu.SetItemDisabled(0, true);
+        }
+    }
+
+    public void SetSimulationState(bool active, bool playing)
+    {
+        SetDisabled(_simulateMenu, SimPause, !active);
+        SetDisabled(_simulateMenu, SimStop, !active);
+        if (_simulateMenu == null) return;
+        var index = _simulateMenu.GetItemIndex(SimPause);
+        if (index >= 0) _simulateMenu.SetItemText(index, active && !playing ? "Resume" : "Pause");
+    }
+
+    public void SetSpeed(float speed)
+    {
+        if (_speedMenu == null) return;
+        for (var i = 0; i < Speeds.Length; i++) _speedMenu.SetItemChecked(i, Mathf.IsEqualApprox(Speeds[i], speed));
     }
 
     public void SetColorMode(ColorMode mode)
@@ -311,6 +368,34 @@ public partial class Hud : Control
         navigate.AddItem("Clear Selection", NavigateClear);
         navigate.IdPressed += id => OnMenu((int)id);
         menus.AddChild(navigate);
+
+        _simulateMenu = new PopupMenu { Name = "Simulate" };
+        _simulateMenu.AddItem("Flow Downstream from Selection", SimDownstream);
+        SetShortcut(_simulateMenu, SimDownstream, Key.D, command: false);
+        _simulateMenu.AddItem("Flow Upstream into Selection", SimUpstream);
+        SetShortcut(_simulateMenu, SimUpstream, Key.U, command: false);
+        _simulateMenu.AddSeparator();
+        _simulateMenu.AddItem("Play Game Loop (frame, physics, draw)", SimGameLoop);
+        SetShortcut(_simulateMenu, SimGameLoop, Key.G, command: false);
+        _triggerMenu = new PopupMenu { Name = "Triggers" };
+        _triggerMenu.IdPressed += id => OnTrigger((int)id);
+        _simulateMenu.AddSubmenuNodeItem("Play Trigger", _triggerMenu);
+        _simulateMenu.AddSeparator();
+        _simulateMenu.AddItem("Pause", SimPause);
+        SetShortcut(_simulateMenu, SimPause, Key.Space, command: false);
+        _simulateMenu.AddItem("Stop", SimStop);
+        _simulateMenu.AddSeparator();
+        _speedMenu = new PopupMenu { Name = "Speed" };
+        for (var i = 0; i < Speeds.Length; i++) _speedMenu.AddRadioCheckItem($"{Speeds[i]:0.##}×", i);
+        _speedMenu.IdPressed += id =>
+        {
+            SetSpeed(Speeds[(int)id]);
+            SpeedChanged?.Invoke(Speeds[(int)id]);
+        };
+        _simulateMenu.AddSubmenuNodeItem("Speed", _speedMenu);
+        _simulateMenu.AddCheckItem("Include Data Reads/Writes", SimData);
+        _simulateMenu.IdPressed += id => OnMenu((int)id);
+        menus.AddChild(_simulateMenu);
 
         var help = new PopupMenu { Name = "Help" };
         help.AddItem("Controls", HelpControls);
@@ -462,12 +547,18 @@ public partial class Hud : Control
                 "Drag — orbit the camera\n" +
                 "Right-drag or Shift+two-finger swipe — pan\n" +
                 "Scroll or pinch — zoom\n" +
-                "Click a system — open it: classes spread out with labels, ports lead to other systems\n" +
-                "Click a class — select it and light up its links (View ▸ Link Depth for more hops)\n" +
+                "Click a system — open it: classes spread out, labels appear as you zoom in, ports lead to other systems\n" +
+                "Click a class (or find it with ⌘F) — select it: it and everything connected to it get labels\n" +
+                "    (View ▸ Link Depth for more hops); other labels hide\n" +
                 "Click a port — jump to that system\n" +
                 "Shift-drag a system — move it (saved per repo; View ▸ Reset Layout undoes)\n" +
                 "F — frame everything · Esc — back out one level · ⌘F — find\n" +
-                "⌘O — open a source folder · ⌘R — re-analyze",
+                "⌘O — open a source folder · ⌘R — re-analyze\n\n" +
+                "Simulate (static: nothing is run)\n" +
+                "D / U — flow downstream from / upstream into the selected class\n" +
+                "G — play the game loop (every _Process/_PhysicsProcess, repeating)\n" +
+                "Simulate ▸ Play Trigger — startup, input, event handlers, requests…\n" +
+                "Space — pause/resume (or replay) · Esc — stop",
         };
         AddChild(_helpDialog);
 
@@ -520,6 +611,29 @@ public partial class Hud : Control
             case NavigateClear:
                 ClearSelectionRequested?.Invoke();
                 break;
+            case SimDownstream:
+                FlowRequested?.Invoke(FlowDirection.Downstream);
+                break;
+            case SimUpstream:
+                FlowRequested?.Invoke(FlowDirection.Upstream);
+                break;
+            case SimGameLoop:
+                GameLoopRequested?.Invoke();
+                break;
+            case SimPause:
+                PauseToggleRequested?.Invoke();
+                break;
+            case SimStop:
+                StopSimulationRequested?.Invoke();
+                break;
+            case SimData:
+            {
+                var index = _simulateMenu!.GetItemIndex(SimData);
+                var on = !_simulateMenu.IsItemChecked(index);
+                _simulateMenu.SetItemChecked(index, on);
+                IncludeDataChanged?.Invoke(on);
+                break;
+            }
             case HelpControls:
                 _helpDialog?.PopupCentered();
                 break;
@@ -527,6 +641,12 @@ public partial class Hud : Control
                 _aboutDialog?.PopupCentered();
                 break;
         }
+    }
+
+    private void OnTrigger(int id)
+    {
+        var index = id - TriggerBase;
+        if (index >= 0 && index < _triggers.Count) TriggerRequested?.Invoke(_triggers[index]);
     }
 
     private void OnRecent(int id)

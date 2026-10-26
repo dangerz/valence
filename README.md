@@ -26,10 +26,25 @@ touches (View ▸ Link Depth for 2–3 hops). Or skip the 3D hunting and pick an
 **Outline** on the left. Shift-drag atoms to arrange things your way. Moves are saved per repo, and
 height stays tied to the dependency layer so the picture keeps its meaning.
 
-The analysis also records methods, properties, fields and events, the calls and reads/writes
-between them in source order, event and signal wiring, and entry points (Godot `_Process`,
-`_Ready`, `Main`, event handlers). That's the groundwork for simulating flow; see
-[docs/ROADMAP.md](docs/ROADMAP.md).
+Labels stay out of the way: class and system names appear as you zoom in. Select a class (click it
+or find it with ⌘F) and only it and everything it connects to are labeled, wherever they are.
+
+### Simulate
+
+The analysis records methods, properties, fields and events, the calls and reads/writes between
+them in source order, event and signal wiring, and entry points (Godot `_Process`, `_Ready`,
+`Main`, event handlers). The **Simulate** menu plays that statically. Nothing is run:
+
+* **D / U**: flow *downstream* from the selected class (what it reaches) or *upstream* into it
+  (what reaches it). Pulses travel the links hop by hop, in the order the calls are written.
+* **G**: play the **game loop**: every `_Process` / `_PhysicsProcess` / `_Draw`, tick after tick.
+* **Simulate ▸ Play Trigger**: startup, input, event handlers, web requests…
+* Space pauses/resumes, Simulate ▸ Speed changes pace, Esc stops. Classes heat up as the flow
+  passes through them; the inspector lists the busiest. Calls through interfaces/virtuals and
+  event wiring show as smaller "likely" pulses.
+
+The demo graph includes four sample web requests, so **Play Trigger ▸ request** works right away.
+Roadmap: [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Layout
 

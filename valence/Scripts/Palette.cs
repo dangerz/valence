@@ -60,6 +60,22 @@ public static class Palette
     public static Color EdgeKind(string kind) =>
         EdgeColors.TryGetValue(kind, out var color) ? color : Hex(0xadb5bd);
 
+    private static readonly Dictionary<string, Color> FlowColors = new()
+    {
+        [MemberEdgeKinds.Calls] = Hex(0x4dabf7),
+        [MemberEdgeKinds.Creates] = Hex(0x69db7c),
+        [MemberEdgeKinds.Raises] = Hex(0xff922b),
+        [MemberEdgeKinds.Triggers] = Hex(0xf783ac),
+        [MemberEdgeKinds.Reads] = Hex(0x9775fa),
+        [MemberEdgeKinds.Writes] = Hex(0xffd43b),
+    };
+
+    /// <summary>Simulation pulse colors by member-edge kind.</summary>
+    public static Color FlowKind(string kind) =>
+        FlowColors.TryGetValue(kind, out var color) ? color : Hex(0xadb5bd);
+
+    public static IEnumerable<KeyValuePair<string, Color>> FlowLegend => FlowColors;
+
     public static Color NodeKind(string kind) =>
         NodeKindColors.TryGetValue(kind, out var color) ? color : Hex(0xced4da);
 

@@ -10,6 +10,9 @@ public sealed class SceneAssets
     public SphereMesh Cloud { get; } = new() { Radius = 1f, Height = 2f, RadialSegments = 32, Rings = 16 };
     public SphereMesh Electron { get; } = new() { Radius = 0.07f, Height = 0.14f, RadialSegments = 8, Rings = 4 };
 
+    /// <summary>Unit sphere for simulation pulses (scaled per pulse).</summary>
+    public SphereMesh Pulse { get; } = new() { Radius = 1f, Height = 2f, RadialSegments = 8, Rings = 4 };
+
     /// <summary>Unit sphere for the ports around an opened atom (scaled per port).</summary>
     public SphereMesh Port { get; } = new() { Radius = 1f, Height = 2f, RadialSegments = 16, Rings = 8 };
 

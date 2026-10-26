@@ -23,52 +23,33 @@ public sealed class PortData
 }
 
 /// <summary>
-/// The opened-atom overlay: a screen-sized label per class, and a labeled port on the rim for
-/// every bonded system ("→ Shop.Data ×12"). Links to other systems are drawn to these ports
-/// instead of across the scene.
+/// Ports on the rim of the opened atom, one per bonded system ("→ Shop.Data ×12"). Links to other
+/// systems are drawn to these ports instead of across the scene. Port labels follow the same zoom
+/// rule as class labels, except for systems connected to the current selection.
 /// </summary>
 public partial class FocusView : Node3D
 {
-    private const float LabelPixelSize = 0.0005f;
     private const float PortPixelSize = 0.0006f;
 
-    private readonly Dictionary<NodeData, Label3D> _labels = new();
     private readonly List<PortData> _ports = new();
     private readonly Dictionary<AtomData, PortData> _portByAtom = new();
+    private readonly HashSet<AtomData> _pinned = new();
     private AtomData? _atom;
     private float _radius;
     private float _fade;
-    private ISet<NodeData>? _lit;
-    private NodeData? _anchor;
-    private NodeData? _hover;
+    private float _zoomRange = 14f;
+    private bool _exclusive;
 
     public IReadOnlyList<PortData> Ports => _ports;
 
     public Vector3? PortPosition(AtomData other) => _portByAtom.TryGetValue(other, out var port) ? port.Position : null;
 
-    public void Open(AtomData atom, GraphModel model, SceneAssets assets, float radius)
+    public void Open(AtomData atom, GraphModel model, SceneAssets assets, float radius, float zoomRange)
     {
         Close();
         _atom = atom;
         _radius = radius;
-
-        foreach (var node in atom.Nodes)
-        {
-            var label = new Label3D
-            {
-                Text = node.Info.Name,
-                FontSize = 32,
-                PixelSize = LabelPixelSize,
-                FixedSize = true,
-                OutlineSize = 10,
-                Billboard = BaseMaterial3D.BillboardModeEnum.Enabled,
-                NoDepthTest = true,
-                RenderPriority = 1,
-                OutlineRenderPriority = 0,
-            };
-            AddChild(label);
-            _labels[node] = label;
-        }
+        _zoomRange = zoomRange;
 
         foreach (var bond in model.Bonds.Where(b => b.A == atom || b.B == atom))
         {
@@ -98,6 +79,8 @@ public partial class FocusView : Node3D
                     Billboard = BaseMaterial3D.BillboardModeEnum.Enabled,
                     NoDepthTest = true,
                     Modulate = color.Lightened(0.3f),
+                    VisibilityRangeEndMargin = 3f,
+                    VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Self,
                 },
             };
             AddChild(port.Mesh);
@@ -113,13 +96,9 @@ public partial class FocusView : Node3D
     public void Close()
     {
         foreach (var child in GetChildren()) child.QueueFree();
-        _labels.Clear();
         _ports.Clear();
         _portByAtom.Clear();
         _atom = null;
-        _lit = null;
-        _anchor = null;
-        _hover = null;
     }
 
     /// <summary>Ports sit on the opened rim, pointing at the system they lead to.</summary>
@@ -136,44 +115,36 @@ public partial class FocusView : Node3D
         }
     }
 
-    /// <param name="t">Opening progress, 0..1. Labels and ports fade in over the second half.</param>
+    /// <param name="t">Opening progress, 0..1. Ports fade in over the second half.</param>
     public void UpdateLayout(float t)
     {
         _fade = Mathf.Clamp((t - 0.5f) * 2f, 0f, 1f);
         Visible = t > 0.01f;
-        foreach (var (node, label) in _labels)
-        {
-            label.Position = node.WorldPosition + Vector3.Up * (node.Radius + 0.15f);
-            ApplyLabelStyle(node, label);
-        }
+        ApplyLabels();
+    }
+
+    /// <summary>Systems connected to the selection keep their port labels; with a selection, others hide.</summary>
+    public void SetPinnedAtoms(IEnumerable<AtomData> atoms, bool exclusive)
+    {
+        _pinned.Clear();
+        _pinned.UnionWith(atoms);
+        _exclusive = exclusive;
+        ApplyLabels();
+    }
+
+    private void ApplyLabels()
+    {
         foreach (var port in _ports)
         {
             if (port.Mesh != null) port.Mesh.Visible = _fade > 0.01f;
-            if (port.Label != null)
-            {
-                var color = port.Label.Modulate;
-                port.Label.Modulate = new Color(color.R, color.G, color.B, _fade);
-                port.Label.OutlineModulate = new Color(0f, 0f, 0f, _fade);
-            }
+            if (port.Label == null) continue;
+            var pinned = _pinned.Contains(port.Other);
+            var alpha = pinned || !_exclusive ? _fade : 0f;
+            port.Label.VisibilityRangeEnd = pinned ? 0f : _zoomRange;
+            port.Label.Visible = alpha > 0.01f;
+            var color = port.Label.Modulate;
+            port.Label.Modulate = new Color(color.R, color.G, color.B, alpha);
+            port.Label.OutlineModulate = new Color(0f, 0f, 0f, alpha);
         }
-    }
-
-    /// <summary>Lit classes stay bright; everything else fades back. The anchor and hovered class turn white.</summary>
-    public void SetHighlight(ISet<NodeData>? lit, NodeData? anchor, NodeData? hover)
-    {
-        _lit = lit;
-        _anchor = anchor;
-        _hover = hover;
-        foreach (var (node, label) in _labels) ApplyLabelStyle(node, label);
-    }
-
-    private void ApplyLabelStyle(NodeData node, Label3D label)
-    {
-        var color = Palette.NodeKind(node.Info.Kind).Lightened(0.35f);
-        var alpha = 1f;
-        if (node == _anchor || node == _hover) color = Colors.White;
-        else if (_lit is { Count: > 0 } && !_lit.Contains(node)) alpha = 0.22f;
-        label.Modulate = new Color(color.R, color.G, color.B, alpha * _fade);
-        label.OutlineModulate = new Color(0f, 0f, 0f, alpha * _fade);
     }
 }

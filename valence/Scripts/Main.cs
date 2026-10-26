@@ -40,6 +40,21 @@ public partial class Main : Node3D
     private BondRenderer? _bonds;
     private DetailLines? _lines;
     private FocusView? _focusView;
+    private LabelLayer? _labels;
+    private SimulationView? _simulation;
+    private FlowGraph? _flowGraph;
+    private float _atomLabelRange = 70f;
+
+    // Simulation state: heat per class (decays toward a floor so reached classes stay visible).
+    private readonly Dictionary<NodeData, float> _heat = new();
+    private readonly Dictionary<NodeData, int> _visits = new();
+    private readonly HashSet<NodeData> _simStarts = new();
+    private FlowPlan? _simPlan;
+    private bool _simLoop;
+    private bool _simFinished;
+    private int _simTick;
+    private bool _includeData;
+    private float _colorCooldown;
     private Dictionary<string, Vector2> _pins = new();
     private ColorMode _colorMode = ColorMode.Visibility;
     private int _linkDepth = 1;
@@ -104,6 +119,20 @@ public partial class Main : Node3D
             ApplyOpenAmount();
             if (_openAmount <= 0f && _openTarget <= 0f) FinishClosing();
         }
+
+        if (_simulation is { Active: true })
+        {
+            if (_simulation.Playing)
+            {
+                foreach (var node in _heat.Keys.ToList()) _heat[node] = Mathf.Max(0.12f, _heat[node] - (float)delta * 0.6f);
+            }
+            _colorCooldown -= (float)delta;
+            if (_colorCooldown <= 0f)
+            {
+                ApplyColors();
+                _colorCooldown = 0.05f;
+            }
+        }
     }
 
     private void WireHud()
@@ -145,6 +174,17 @@ public partial class Main : Node3D
         };
         _hud.PointerEnteredUi += ClearHover;
         _hud.Progress.CancelRequested += () => _analysis?.Cancel();
+
+        _hud.FlowRequested += StartFlow;
+        _hud.GameLoopRequested += () => StartTrigger(new[] { Triggers.Frame, Triggers.Physics, Triggers.Draw }, loop: true, "Game loop");
+        _hud.TriggerRequested += trigger => StartTrigger(new[] { trigger }, loop: false, $"Trigger: {trigger}");
+        _hud.PauseToggleRequested += TogglePause;
+        _hud.StopSimulationRequested += StopSimulation;
+        _hud.SpeedChanged += speed =>
+        {
+            if (_simulation != null) _simulation.Speed = speed;
+        };
+        _hud.IncludeDataChanged += on => _includeData = on;
     }
 
     // ---------------------------------------------------------------- loading
@@ -174,9 +214,11 @@ public partial class Main : Node3D
             return;
         }
 
+        StopSimulation();
         ClearSelection();
         _opened = null;
         _openAmount = _openTarget = 0f;
+        _flowGraph = null;
         _world?.QueueFree();
         _world = new Node3D { Name = "World" };
         AddChild(_world);
@@ -185,10 +227,13 @@ public partial class Main : Node3D
         _pins = LayoutStore.Load(graph.Repo.Root);
         Layout.Run(_model, _pins);
 
+        // Big graphs: system names only appear once you're closer.
+        _atomLabelRange = _model.AtomList.Count > 40 ? 35f : 70f;
         foreach (var atom in _model.AtomList)
         {
             var view = new AtomView();
             view.Setup(atom, _assets);
+            view.SetLabelRange(_atomLabelRange);
             _world.AddChild(view);
         }
 
@@ -206,6 +251,23 @@ public partial class Main : Node3D
 
         _focusView = new FocusView();
         _world.AddChild(_focusView);
+
+        _labels = new LabelLayer();
+        _world.AddChild(_labels);
+
+        _simulation = new SimulationView();
+        _simulation.Init(_assets);
+        _simulation.NodeReached += OnNodeReached;
+        _simulation.Finished += OnSimulationFinished;
+        _world.AddChild(_simulation);
+
+        var triggers = graph.EntryPoints
+            .GroupBy(e => e.Trigger)
+            .Select(g => (g.Key, g.Select(e => e.Member).Distinct().Count()))
+            .OrderBy(t => t.Key, StringComparer.Ordinal)
+            .ToList();
+        var hasGameLoop = graph.EntryPoints.Any(e => e.Trigger is Triggers.Frame or Triggers.Physics or Triggers.Draw);
+        _hud.SetTriggers(triggers, hasGameLoop);
 
         foreach (var molecule in _model.Molecules)
         {
@@ -382,7 +444,142 @@ public partial class Main : Node3D
     private void Back()
     {
         if (_selectedNode != null) FocusAtom(_selectedNode.Atom, fly: false);
+        else if (_focusAtom != null) ClearSelection();
+        else if (_simulation is { Active: true }) StopSimulation();
         else ClearSelection();
+    }
+
+    // ---------------------------------------------------------------- simulation
+
+    /// <summary>Flow from (downstream) or into (upstream) the selected class.</summary>
+    private void StartFlow(FlowDirection direction)
+    {
+        if (_model == null || _simulation == null) return;
+        if (_selectedNode is not { } node)
+        {
+            _hud.SetStatus("Select a class first (click one, or find it in the Outline), then run the flow.");
+            return;
+        }
+        var graph = _flowGraph ??= FlowGraph.For(_model);
+        var starts = graph.StartPointsFor(node);
+        if (starts.Count == 0)
+        {
+            _hud.SetStatus($"{node.Info.Name} has no recorded calls or data links.");
+            return;
+        }
+        var title = direction == FlowDirection.Downstream
+            ? $"Flow downstream from {node.Info.Name}"
+            : $"Flow upstream into {node.Info.Name}";
+        var plan = FlowSimulator.Build(graph, starts, direction, _includeData, title);
+        BeginSimulation(graph, plan, new[] { node }, loop: false);
+    }
+
+    /// <summary>Plays every entry point with one of these triggers (the game loop is frame+physics+draw).</summary>
+    private void StartTrigger(string[] triggers, bool loop, string title)
+    {
+        if (_model == null || _simulation == null) return;
+        var graph = _flowGraph ??= FlowGraph.For(_model);
+        if (!graph.MemberLevel)
+        {
+            _hud.SetStatus("This graph has no method-level data. Re-analyze the source folder (File ▸ Re-analyze).");
+            return;
+        }
+        var starts = _model.Graph.EntryPoints
+            .Where(e => triggers.Contains(e.Trigger))
+            .Select(e => e.Member)
+            .Distinct()
+            .ToList();
+        if (starts.Count == 0)
+        {
+            _hud.SetStatus($"No entry points for {string.Join("/", triggers)} in this graph.");
+            return;
+        }
+        var plan = FlowSimulator.Build(graph, starts, FlowDirection.Downstream, _includeData, title);
+        var startNodes = starts.Select(graph.OwnerOf).Where(n => n != null).Cast<NodeData>().Distinct().ToList();
+        BeginSimulation(graph, plan, startNodes, loop);
+    }
+
+    private void BeginSimulation(FlowGraph graph, FlowPlan plan, IEnumerable<NodeData> startNodes, bool loop)
+    {
+        if (_simulation == null || _model == null) return;
+        if (plan.Events.Count == 0)
+        {
+            _hud.SetStatus($"{plan.Title}: nothing to play (no outgoing calls).");
+            return;
+        }
+        _heat.Clear();
+        _visits.Clear();
+        _simStarts.Clear();
+        _simStarts.UnionWith(startNodes);
+        foreach (var node in _simStarts) _heat[node] = 1f;
+        _simPlan = plan;
+        _simLoop = loop;
+        _simTick = 1;
+        _simFinished = false;
+        _simulation.Play(graph, plan, keepTrace: false);
+        _hud.SetSimulationState(true, true);
+        _hud.ShowInfo(InfoText.ForSimulation(plan, _simTick, loop, _visits, _model));
+        _hud.SetStatus($"{plan.Title}: {plan.Events.Count} pulses, {plan.Reached} points reached" +
+                       (plan.Truncated ? " (truncated)" : "") + " · Space pauses · Esc stops");
+        ApplyLabels();
+        ApplyColors();
+    }
+
+    private void OnNodeReached(NodeData node, float amount)
+    {
+        _heat[node] = Mathf.Min(1f, _heat.GetValueOrDefault(node) + amount);
+        _visits[node] = _visits.GetValueOrDefault(node) + 1;
+    }
+
+    private void OnSimulationFinished()
+    {
+        if (_simulation == null || _simPlan == null || _model == null) return;
+        if (_simLoop && _flowGraph != null)
+        {
+            _simTick++;
+            _simulation.Play(_flowGraph, _simPlan, keepTrace: true);
+            if (_selectedNode == null && _focusAtom == null) _hud.ShowInfo(InfoText.ForSimulation(_simPlan, _simTick, true, _visits, _model));
+            return;
+        }
+        _simFinished = true;
+        _hud.SetSimulationState(true, false);
+        _hud.ShowInfo(InfoText.ForSimulation(_simPlan, _simTick, false, _visits, _model));
+        _hud.SetStatus($"{_simPlan.Title}: finished. {_visits.Count} classes reached · Simulate ▸ Stop (or Esc) clears it.");
+    }
+
+    private void TogglePause()
+    {
+        if (_simulation is not { Active: true }) return;
+        if (_simulation.Playing)
+        {
+            _simulation.Pause();
+        }
+        else if (_simFinished && _flowGraph != null && _simPlan != null)
+        {
+            // A single run that already finished: play it again.
+            _simFinished = false;
+            _simTick++;
+            _simulation.Play(_flowGraph, _simPlan, keepTrace: true);
+        }
+        else
+        {
+            _simulation.Resume();
+        }
+        _hud.SetSimulationState(true, _simulation.Playing);
+    }
+
+    private void StopSimulation()
+    {
+        _simulation?.Stop();
+        _heat.Clear();
+        _visits.Clear();
+        _simStarts.Clear();
+        _simPlan = null;
+        _simLoop = false;
+        _simFinished = false;
+        _hud.SetSimulationState(false, false);
+        ApplyLabels();
+        ApplyColors();
     }
 
     private void ShowSummary()
@@ -434,9 +631,33 @@ public partial class Main : Node3D
             atom.View?.SetState(atom == _focusAtom, _focusAtom != null && atom != _focusAtom);
         }
         _bonds?.SetFocus(_focusAtom);
-        _focusView?.SetHighlight(_lit, _anchor, _hoverNode);
+        ApplyLabels();
         ApplyColors();
         UpdateLines();
+    }
+
+    /// <summary>
+    /// Labels: with a selection (clicked or found via search), only the selection and everything it
+    /// connects to are labeled, wherever they are. Without one, labels appear as you zoom in; the
+    /// hovered class and its neighbours are labeled too. Simulation start points stay labeled.
+    /// </summary>
+    private void ApplyLabels()
+    {
+        if (_model == null || _labels == null) return;
+        var selectionActive = _selectedNode != null || _focusAtom != null;
+
+        var pinned = new HashSet<NodeData>(_simStarts);
+        if (_anchor != null) pinned.UnionWith(_lit);
+        _labels.SetPinned(pinned, _anchor, _selectedNode != null);
+
+        var pinnedAtoms = new HashSet<AtomData>(pinned.Select(n => n.Atom));
+        if (_focusAtom != null)
+        {
+            pinnedAtoms.Add(_focusAtom);
+            if (_selectedNode == null) pinnedAtoms.UnionWith(_focusAtom.Neighbors);
+        }
+        foreach (var atom in _model.AtomList) atom.View?.SetLabelPinned(pinnedAtoms.Contains(atom), selectionActive);
+        _focusView?.SetPinnedAtoms(pinnedAtoms, _selectedNode != null);
     }
 
     // ---------------------------------------------------------------- opening an atom
@@ -449,7 +670,11 @@ public partial class Main : Node3D
         _openRadius = Layout.Expand(atom, _model);
         _openAmount = 0f;
         _openTarget = 1f;
-        _focusView.Open(atom, _model, _assets, _openRadius);
+        // Labels appear once the camera is within this distance, so zooming in reveals more of them.
+        var zoomRange = Mathf.Max(10f, _openRadius * 1.6f);
+        _focusView.Open(atom, _model, _assets, _openRadius, zoomRange);
+        _labels?.SetOpened(atom.Nodes, zoomRange);
+        _labels?.SetOpenFade(0f);
     }
 
     private void ApplyOpenAmount()
@@ -462,6 +687,9 @@ public partial class Main : Node3D
         _nucleons?.UpdateAtom(_opened);
         _bonds?.UpdateAtom(_opened);
         _focusView?.UpdateLayout(t);
+        _labels?.SetOpenFade(Mathf.Clamp((t - 0.5f) * 2f, 0f, 1f));
+        _labels?.UpdatePositions();
+        _simulation?.RefreshTrace();
         UpdateLines();
     }
 
@@ -481,6 +709,10 @@ public partial class Main : Node3D
         _nucleons?.UpdateAtom(atom);
         _bonds?.UpdateAtom(atom);
         _focusView?.Close();
+        _labels?.ClearOpened();
+        _labels?.SetOpenFade(1f);
+        _labels?.UpdatePositions();
+        _simulation?.RefreshTrace();
     }
 
     // ---------------------------------------------------------------- colors & lines
@@ -502,6 +734,23 @@ public partial class Main : Node3D
             _ => node.IsPublic ? Palette.Proton : Palette.Neutron,
         };
         var glow = RecencyGlow(node, model);
+
+        if (_simulation is { Active: true })
+        {
+            // Simulation: classes the flow has reached glow with their heat; the rest fade back.
+            if (node == _anchor) return new Color(Palette.Selected.R, Palette.Selected.G, Palette.Selected.B, 1f);
+            if (_heat.TryGetValue(node, out var heat))
+            {
+                color = color.Lerp(Colors.White, heat * 0.35f);
+                glow = Mathf.Max(glow * 0.3f, heat);
+            }
+            else
+            {
+                color = color.Darkened(0.75f);
+                glow *= 0.1f;
+            }
+            return new Color(color.R, color.G, color.B, glow);
+        }
 
         if (_anchor != null)
         {
@@ -545,6 +794,11 @@ public partial class Main : Node3D
             return;
         }
 
+        // Links from the selected class go straight to connected classes in other systems (which are
+        // labeled), instead of stopping at the port.
+        bool DrawDirect(NodeData a, NodeData b) =>
+            _selectedNode != null && (a == _selectedNode || b == _selectedNode) && _lit.Contains(a) && _lit.Contains(b);
+
         bool Hot(NodeData a, NodeData b) =>
             _anchor == null || a == _anchor || b == _anchor || (_selectedNode != null && _lit.Contains(a) && _lit.Contains(b));
 
@@ -561,7 +815,7 @@ public partial class Main : Node3D
             foreach (var edge in node.Outgoing)
             {
                 if (!_enabledKinds.Contains(edge.Kind) || !_model.Nodes.TryGetValue(edge.Target, out var target)) continue;
-                if (target.Atom == atom)
+                if (target.Atom == atom || DrawDirect(node, target))
                 {
                     Add(node.WorldPosition, target.WorldPosition, edge.Kind, Hot(node, target));
                 }
@@ -574,7 +828,11 @@ public partial class Main : Node3D
             {
                 if (!_enabledKinds.Contains(edge.Kind) || !_model.Nodes.TryGetValue(edge.Source, out var source)) continue;
                 if (source.Atom == atom) continue; // drawn once, from the outgoing side
-                if (_focusView.PortPosition(source.Atom) is { } port)
+                if (DrawDirect(source, node))
+                {
+                    Add(source.WorldPosition, node.WorldPosition, edge.Kind, true);
+                }
+                else if (_focusView.PortPosition(source.Atom) is { } port)
                 {
                     Add(port, node.WorldPosition, edge.Kind, Hot(source, node));
                 }
@@ -592,6 +850,8 @@ public partial class Main : Node3D
         _nucleons?.UpdateAtom(atom);
         _bonds?.UpdateAtom(atom);
         PlaceMoleculeLabel(atom.Molecule);
+        _labels?.UpdatePositions();
+        _simulation?.RefreshTrace();
         if (_opened != null)
         {
             _focusView?.UpdatePorts();
@@ -781,6 +1041,18 @@ public partial class Main : Node3D
             case Key.F:
                 FrameAll(false);
                 break;
+            case Key.D when !command:
+                StartFlow(FlowDirection.Downstream);
+                break;
+            case Key.U when !command:
+                StartFlow(FlowDirection.Upstream);
+                break;
+            case Key.G when !command:
+                StartTrigger(new[] { Triggers.Frame, Triggers.Physics, Triggers.Draw }, loop: true, "Game loop");
+                break;
+            case Key.Space:
+                TogglePause();
+                break;
             case Key.Escape:
                 Back();
                 break;
@@ -825,9 +1097,7 @@ public partial class Main : Node3D
         _hoverPort = port;
 
         _hud.ShowTooltip(TooltipText(), screen);
-        if (!changed) return;
-        if (_selectedNode == null) RefreshSelection();
-        else _focusView?.SetHighlight(_lit, _anchor, _hoverNode);
+        if (changed && _selectedNode == null) RefreshSelection();
     }
 
     private void ClearHover()
@@ -838,7 +1108,6 @@ public partial class Main : Node3D
         _hoverAtom = null;
         _hoverPort = null;
         if (_selectedNode == null) RefreshSelection();
-        else _focusView?.SetHighlight(_lit, _anchor, null);
     }
 
     private string? TooltipText()
