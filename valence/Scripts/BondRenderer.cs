@@ -61,7 +61,7 @@ public partial class BondRenderer : Node3D
             bond.Mesh.Visible = false;
             return;
         }
-        bond.Mesh.Visible = true;
+        bond.Mesh.Visible = !bond.A.IsHidden && !bond.B.IsHidden;
 
         var direction = delta / distance;
         var start = from + direction * bond.A.DisplayRadius * 0.75f;
@@ -88,7 +88,10 @@ public partial class BondRenderer : Node3D
         if (bond.Mesh == null) return;
         var touchesFocus = focus == null || bond.A == focus || bond.B == focus;
         var color = bond.Covalent ? Palette.Covalent : Palette.Ionic;
-        color.A = touchesFocus ? 1f : 0.15f;
+        // Hidden systems take their bonds with them; quiet ones fade them.
+        var opacity = Mathf.Min(bond.A.Opacity, bond.B.Opacity);
+        color.A = (touchesFocus ? 1f : 0.15f) * opacity;
+        bond.Mesh.Visible = opacity > 0f && bond.A.Position.DistanceSquaredTo(bond.B.Position) > 1e-6f;
         bond.Mesh.SetInstanceShaderParameter("bond_color", color);
         bond.Mesh.SetInstanceShaderParameter("highlight", focus != null && touchesFocus ? 1f : 0f);
         bond.Mesh.SetInstanceShaderParameter("two_way", bond.Covalent ? 1f : 0f);

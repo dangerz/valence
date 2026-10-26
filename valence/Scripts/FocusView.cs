@@ -132,14 +132,17 @@ public partial class FocusView : Node3D
         ApplyLabels();
     }
 
+    /// <summary>Re-applies hidden/quiet to ports after visibility changes.</summary>
+    public void RefreshVisibility() => ApplyLabels();
+
     private void ApplyLabels()
     {
         foreach (var port in _ports)
         {
-            if (port.Mesh != null) port.Mesh.Visible = _fade > 0.01f;
+            if (port.Mesh != null) port.Mesh.Visible = _fade > 0.01f && !port.Other.IsHidden;
             if (port.Label == null) continue;
             var pinned = _pinned.Contains(port.Other);
-            var alpha = pinned || !_exclusive ? _fade : 0f;
+            var alpha = (pinned || !_exclusive ? _fade : 0f) * port.Other.Opacity;
             port.Label.VisibilityRangeEnd = pinned ? 0f : _zoomRange;
             port.Label.Visible = alpha > 0.01f;
             var color = port.Label.Modulate;

@@ -22,6 +22,7 @@ public static class Palette
     public static readonly Color Selected = Hex(0xffffff);
     public static readonly Color MutedText = Hex(0x8b95a7);
     public static readonly Color Accent = Hex(0x7cc4ff);
+    public static readonly Color PanelBorder = Hex(0x3a5a85);
 
     private static readonly Color HeatCold = Hex(0x2a4b8d);
     private static readonly Color HeatMid = Hex(0xd6336c);

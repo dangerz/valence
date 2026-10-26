@@ -22,6 +22,10 @@ public partial class Hud : Control
     private const int ViewOutline = 22;
     private const int ViewInspector = 23;
     private const int ViewLegend = 24;
+    private const int ViewMethods = 25;
+    private const int ViewShowAll = 26;
+
+    private static readonly float[] QuietFades = { 0.05f, 0.1f, 0.15f, 0.25f, 0.4f };
     private const int NavigateFind = 40;
     private const int NavigateBack = 41;
     private const int NavigateClear = 42;
@@ -49,6 +53,7 @@ public partial class Hud : Control
     private readonly List<string> _recentFolders = new();
     private readonly List<string> _triggers = new();
     private PopupMenu? _simulateMenu;
+    private PopupMenu? _fadeMenu;
     private PopupMenu? _triggerMenu;
     private PopupMenu? _speedMenu;
     private PopupMenu? _fileMenu;
@@ -71,6 +76,8 @@ public partial class Hud : Control
     private AcceptDialog? _aboutDialog;
 
     public OutlinePanel Outline { get; } = new();
+    public MethodsPanel Methods { get; } = new();
+    private VBoxContainer? _rightColumn;
     public ProgressOverlay Progress { get; } = new();
 
     public event Action<string>? SourceFolderChosen;
@@ -92,18 +99,20 @@ public partial class Hud : Control
     public event Action? StopSimulationRequested;
     public event Action<float>? SpeedChanged;
     public event Action<bool>? IncludeDataChanged;
+    public event Action<float>? QuietFadeChanged;
+    public event Action? ShowAllRequested;
 
     /// <summary>A "node:" / "atom:" link was clicked in the inspector or picked in the outline.</summary>
     public event Action<string>? LinkClicked;
 
-    /// <summary>Outline, inspector, legend visibility changed (for saving).</summary>
-    public event Action<bool, bool, bool>? PanelsChanged;
+    /// <summary>Outline, methods, inspector, legend visibility changed (for saving).</summary>
+    public event Action<bool, bool, bool, bool>? PanelsChanged;
 
     /// <summary>The pointer moved onto a UI panel (so 3D hover should end).</summary>
     public event Action? PointerEnteredUi;
 
     /// <summary>Builds the UI. Call once, before adding to the tree.</summary>
-    public void Build(bool showOutline, bool showInspector, bool showLegend)
+    public void Build(bool showOutline, bool showMethods, bool showInspector, bool showLegend)
     {
         SetAnchorsPreset(LayoutPreset.FullRect);
         MouseFilter = MouseFilterEnum.Ignore;
@@ -119,7 +128,7 @@ public partial class Hud : Control
         middle.AddThemeConstantOverride("separation", 0);
         root.AddChild(middle);
 
-        Outline.AddThemeStyleboxOverride("panel", PanelStyle(0.92f, 0));
+        Outline.AddThemeStyleboxOverride("panel", PanelStyle(0.92f, 0, borderRight: 2));
         Outline.CustomMinimumSize = new Vector2(300f, 0f);
         Outline.Build();
         Outline.ItemChosen += meta => LinkClicked?.Invoke(meta);
@@ -132,8 +141,22 @@ public partial class Hud : Control
         middle.AddChild(viewport);
         BuildLegend(viewport, showLegend);
 
+        // Right column: Methods (with ▶ simulate buttons) above the Inspector.
+        _rightColumn = new VBoxContainer { CustomMinimumSize = new Vector2(400f, 0f), MouseFilter = MouseFilterEnum.Ignore };
+        _rightColumn.AddThemeConstantOverride("separation", 0);
+        middle.AddChild(_rightColumn);
+
+        Methods.AddThemeStyleboxOverride("panel", PanelStyle(0.92f, 0, borderLeft: 2, borderBottom: 2));
+        Methods.SizeFlagsVertical = SizeFlags.ExpandFill;
+        Methods.SizeFlagsStretchRatio = 0.8f;
+        Methods.Build();
+        Methods.MouseEntered += () => PointerEnteredUi?.Invoke();
+        Methods.Visible = showMethods;
+        _rightColumn.AddChild(Methods);
+
         BuildInspector(showInspector);
-        middle.AddChild(_inspector!);
+        _rightColumn.AddChild(_inspector!);
+        UpdateRightColumn();
 
         root.AddChild(BuildStatusBar());
 
@@ -144,6 +167,7 @@ public partial class Hud : Control
         AddChild(Progress);
 
         SetChecked(_viewMenu, ViewOutline, showOutline);
+        SetChecked(_viewMenu, ViewMethods, showMethods);
         SetChecked(_viewMenu, ViewInspector, showInspector);
         SetChecked(_viewMenu, ViewLegend, showLegend);
         SetColorMode(ColorMode.Visibility);
@@ -220,6 +244,17 @@ public partial class Hud : Control
         if (_simulateMenu == null) return;
         var index = _simulateMenu.GetItemIndex(SimPause);
         if (index >= 0) _simulateMenu.SetItemText(index, active && !playing ? "Resume" : "Pause");
+    }
+
+    public void SetQuietFade(float fade)
+    {
+        if (_fadeMenu == null) return;
+        var closest = 0;
+        for (var i = 1; i < QuietFades.Length; i++)
+        {
+            if (Mathf.Abs(QuietFades[i] - fade) < Mathf.Abs(QuietFades[closest] - fade)) closest = i;
+        }
+        for (var i = 0; i < QuietFades.Length; i++) _fadeMenu.SetItemChecked(i, i == closest);
     }
 
     public void SetSpeed(float speed)
@@ -354,7 +389,18 @@ public partial class Hud : Control
         SetShortcut(_viewMenu, ViewFrameAll, Key.F, command: false);
         _viewMenu.AddItem("Reset Layout", ViewResetLayout);
         _viewMenu.AddSeparator();
+        _fadeMenu = new PopupMenu { Name = "QuietFade" };
+        for (var i = 0; i < QuietFades.Length; i++) _fadeMenu.AddRadioCheckItem($"{QuietFades[i] * 100:0}%", i);
+        _fadeMenu.IdPressed += id =>
+        {
+            SetQuietFade(QuietFades[(int)id]);
+            QuietFadeChanged?.Invoke(QuietFades[(int)id]);
+        };
+        _viewMenu.AddSubmenuNodeItem("Quiet Fade", _fadeMenu);
+        _viewMenu.AddItem("Show Everything (clear hide/quiet)", ViewShowAll);
+        _viewMenu.AddSeparator();
         _viewMenu.AddCheckItem("Outline", ViewOutline);
+        _viewMenu.AddCheckItem("Methods", ViewMethods);
         _viewMenu.AddCheckItem("Inspector", ViewInspector);
         _viewMenu.AddCheckItem("Legend", ViewLegend);
         _viewMenu.IdPressed += id => OnMenu((int)id);
@@ -412,8 +458,8 @@ public partial class Hud : Control
 
     private void BuildInspector(bool visible)
     {
-        _inspector = new PanelContainer { CustomMinimumSize = new Vector2(400f, 0f), Visible = visible };
-        _inspector.AddThemeStyleboxOverride("panel", PanelStyle(0.92f, 0));
+        _inspector = new PanelContainer { SizeFlagsVertical = SizeFlags.ExpandFill, Visible = visible };
+        _inspector.AddThemeStyleboxOverride("panel", PanelStyle(0.92f, 0, borderLeft: 2));
         _inspector.MouseEntered += () => PointerEnteredUi?.Invoke();
 
         var column = new VBoxContainer();
@@ -597,7 +643,11 @@ public partial class Hud : Control
             case ViewResetLayout:
                 ResetLayoutRequested?.Invoke();
                 break;
+            case ViewShowAll:
+                ShowAllRequested?.Invoke();
+                break;
             case ViewOutline:
+            case ViewMethods:
             case ViewInspector:
             case ViewLegend:
                 TogglePanel(id);
@@ -660,6 +710,7 @@ public partial class Hud : Control
         Control? panel = id switch
         {
             ViewOutline => Outline,
+            ViewMethods => Methods,
             ViewInspector => _inspector,
             ViewLegend => _legend,
             _ => null,
@@ -667,7 +718,14 @@ public partial class Hud : Control
         if (panel == null) return;
         panel.Visible = !panel.Visible;
         SetChecked(_viewMenu, id, panel.Visible);
-        PanelsChanged?.Invoke(Outline.Visible, _inspector?.Visible ?? false, _legend?.Visible ?? false);
+        UpdateRightColumn();
+        PanelsChanged?.Invoke(Outline.Visible, Methods.Visible, _inspector?.Visible ?? false, _legend?.Visible ?? false);
+    }
+
+    /// <summary>The right column takes no space when both of its panels are hidden.</summary>
+    private void UpdateRightColumn()
+    {
+        if (_rightColumn != null) _rightColumn.Visible = Methods.Visible || (_inspector?.Visible ?? false);
     }
 
     // ---------------------------------------------------------------- helpers
@@ -706,9 +764,19 @@ public partial class Hud : Control
     private static string DefaultGraphDir() => Path.Combine(
         System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile), ".valence", "graphs");
 
-    private static StyleBoxFlat PanelStyle(float alpha, int corner, float margin = 10f)
+    private static StyleBoxFlat PanelStyle(
+        float alpha, int corner, float margin = 10f,
+        int borderLeft = 0, int borderRight = 0, int borderTop = 0, int borderBottom = 0)
     {
-        var style = new StyleBoxFlat { BgColor = new Color(0.06f, 0.08f, 0.12f, alpha) };
+        var style = new StyleBoxFlat
+        {
+            BgColor = new Color(0.06f, 0.08f, 0.12f, alpha),
+            BorderColor = Palette.PanelBorder,
+            BorderWidthLeft = borderLeft,
+            BorderWidthRight = borderRight,
+            BorderWidthTop = borderTop,
+            BorderWidthBottom = borderBottom,
+        };
         style.SetCornerRadiusAll(corner);
         style.SetContentMarginAll(margin);
         return style;

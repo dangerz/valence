@@ -115,14 +115,15 @@ public partial class SimulationView : Node3D
             var pulse = events[i];
             var from = _graph.OwnerOf(pulse.From);
             var to = _graph.OwnerOf(pulse.To);
-            if (from == null || to == null) continue;
+            if (from == null || to == null || from.IsHidden || to.IsHidden) continue;
+            var opacity = Mathf.Min(from.Opacity, to.Opacity);
             var s = Mathf.Clamp((_time - pulse.Start) / (pulse.Arrive - pulse.Start), 0f, 1f);
             var position = PulsePosition(from.WorldPosition, to.WorldPosition, s, from == to);
-            var size = pulse.Likely ? 0.08f : 0.12f;
+            var size = (pulse.Likely ? 0.08f : 0.12f) * (opacity < 1f ? 0.6f : 1f);
             var basis = new Basis(new Vector3(size, 0f, 0f), new Vector3(0f, size, 0f), new Vector3(0f, 0f, size));
             _pulses.SetInstanceTransform(count, new Transform3D(basis, position));
             var color = Palette.FlowKind(pulse.Kind);
-            _pulses.SetInstanceColor(count, new Color(color.R, color.G, color.B, pulse.Likely ? 0.6f : 1f));
+            _pulses.SetInstanceColor(count, new Color(color.R, color.G, color.B, (pulse.Likely ? 0.6f : 1f) * opacity));
             count++;
         }
         _pulses.VisibleInstanceCount = count;
@@ -161,8 +162,9 @@ public partial class SimulationView : Node3D
         foreach (var ((from, to, kind), hits) in _traced)
         {
             if (lines.Count >= MaxTraceLines) break;
+            if (from.IsHidden || to.IsHidden) continue;
             var color = Palette.FlowKind(kind);
-            color.A = Mathf.Clamp(0.25f + 0.08f * hits, 0.25f, 0.85f);
+            color.A = Mathf.Clamp(0.25f + 0.08f * hits, 0.25f, 0.85f) * Mathf.Min(from.Opacity, to.Opacity);
             lines.Add((from.WorldPosition, to.WorldPosition, color));
         }
         _trace.SetLines(lines);

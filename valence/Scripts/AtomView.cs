@@ -17,7 +17,12 @@ public partial class AtomView : Node3D
     private MeshInstance3D? _cloud;
     private Label3D? _label;
     private Color _labelColor;
+    private Color _tint;
     private float _labelRange = 70f;
+    private float _opacity = 1f;
+    private float _expansion;
+    private bool _focused;
+    private bool _dimmed;
 
     public AtomData? Data { get; private set; }
 
@@ -27,6 +32,7 @@ public partial class AtomView : Node3D
         data.View = this;
         Position = data.Position;
         var tint = Palette.MoleculeHue(data.Molecule.Id);
+        _tint = tint;
 
         _cloud = new MeshInstance3D
         {
@@ -99,11 +105,25 @@ public partial class AtomView : Node3D
     /// <param name="dimmed">Another system is focused.</param>
     public void SetState(bool focused, bool dimmed)
     {
+        _focused = focused;
+        _dimmed = dimmed;
         _cloud?.SetInstanceShaderParameter("highlight", focused ? 1f : 0f);
         if (_label != null)
         {
-            _label.Modulate = focused ? Colors.White : dimmed ? _labelColor.Darkened(0.55f) : _labelColor;
+            var color = focused ? Colors.White : dimmed ? _labelColor.Darkened(0.55f) : _labelColor;
+            _label.Modulate = new Color(color.R, color.G, color.B, _opacity);
+            _label.OutlineModulate = new Color(0f, 0f, 0f, _opacity);
         }
+    }
+
+    /// <summary>1 shown, the quiet fade when quiet, 0 hidden (the whole atom disappears).</summary>
+    public void SetOpacity(float opacity)
+    {
+        _opacity = opacity;
+        Visible = opacity > 0f;
+        _cloud?.SetInstanceShaderParameter("cloud_color", new Color(_tint.R, _tint.G, _tint.B, opacity));
+        foreach (var orbit in _orbits) orbit.Visible = _expansion < 0.05f && opacity >= 1f;
+        SetState(_focused, _dimmed);
     }
 
     /// <summary>Camera distance under which the system's name shows (smaller for big graphs).</summary>
@@ -128,7 +148,8 @@ public partial class AtomView : Node3D
         if (Data == null) return;
         var radius = Mathf.Lerp(Data.Radius, Mathf.Max(openRadius, Data.Radius), t);
         if (_cloud != null) _cloud.Scale = Vector3.One * radius * 0.95f;
-        foreach (var orbit in _orbits) orbit.Visible = t < 0.05f;
+        _expansion = t;
+        foreach (var orbit in _orbits) orbit.Visible = t < 0.05f && _opacity >= 1f;
         if (_label != null) _label.Position = new Vector3(0f, radius + 0.35f, 0f);
     }
 

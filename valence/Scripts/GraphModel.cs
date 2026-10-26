@@ -35,6 +35,10 @@ public sealed class NodeData
     public List<EdgeInfo> Outgoing { get; } = new();
     public List<EdgeInfo> Incoming { get; } = new();
 
+    /// <summary>1 shown, the quiet fade (e.g. 0.15) when quiet, 0 when hidden (itself or a parent).</summary>
+    public float Opacity { get; set; } = 1f;
+    public bool IsHidden => Opacity <= 0f;
+
     public Vector3 WorldPosition => Atom.Position + LocalOffset;
     public bool IsPublic => Info.Visibility == "public";
     public double Metric(string key) => Info.Metrics.TryGetValue(key, out var value) ? value : 0;
@@ -71,6 +75,10 @@ public sealed class AtomData
     public bool Pinned { get; set; }
     public AtomView? View { get; set; }
 
+    /// <summary>1 shown, the quiet fade when quiet, 0 when hidden (itself or its project).</summary>
+    public float Opacity { get; set; } = 1f;
+    public bool IsHidden => Opacity <= 0f;
+
     /// <summary>How many other systems this one bonds with.</summary>
     public int Valence => Neighbors.Count;
 
@@ -97,6 +105,7 @@ public sealed class MoleculeData
     public string Name { get; }
     public List<AtomData> Atoms { get; } = new();
     public Label3D? Label { get; set; }
+    public float Opacity { get; set; } = 1f;
 }
 
 /// <summary>Aggregated dependencies between two systems. A and B are ordered by id.</summary>
@@ -229,12 +238,12 @@ public sealed class GraphModel
         foreach (var edge in node.Outgoing)
         {
             if (kinds != null && !kinds.Contains(edge.Kind)) continue;
-            if (Nodes.TryGetValue(edge.Target, out var target)) yield return target;
+            if (Nodes.TryGetValue(edge.Target, out var target) && !target.IsHidden) yield return target;
         }
         foreach (var edge in node.Incoming)
         {
             if (kinds != null && !kinds.Contains(edge.Kind)) continue;
-            if (Nodes.TryGetValue(edge.Source, out var source)) yield return source;
+            if (Nodes.TryGetValue(edge.Source, out var source) && !source.IsHidden) yield return source;
         }
     }
 

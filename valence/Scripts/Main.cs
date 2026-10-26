@@ -55,6 +55,11 @@ public partial class Main : Node3D
     private int _simTick;
     private bool _includeData;
     private float _colorCooldown;
+    private readonly HashSet<AtomData> _revealedAtoms = new();
+
+    // Hide / quiet: per-item states (key "molecule:/atom:/node:" + id) and the quiet fade level.
+    private Dictionary<string, Visibility> _visibility = new(StringComparer.Ordinal);
+    private float _quietFade = 0.15f;
     private Dictionary<string, Vector2> _pins = new();
     private ColorMode _colorMode = ColorMode.Visibility;
     private int _linkDepth = 1;
@@ -97,12 +102,14 @@ public partial class Main : Node3D
         _camera.MakeCurrent();
 
         _hud = new Hud();
-        _hud.Build(_settings.ShowOutline, _settings.ShowInspector, _settings.ShowLegend);
+        _hud.Build(_settings.ShowOutline, _settings.ShowMethods, _settings.ShowInspector, _settings.ShowLegend);
         var canvas = new CanvasLayer();
         AddChild(canvas);
         canvas.AddChild(_hud);
         WireHud();
         _hud.SetRecent(_settings.RecentFolders);
+        _quietFade = Mathf.Clamp(_settings.QuietFade, 0.02f, 0.9f);
+        _hud.SetQuietFade(_quietFade);
 
         var startup = StartupGraph();
         GD.Print($"[valence] viewer ready; loading {startup}");
@@ -165,12 +172,24 @@ public partial class Main : Node3D
             RefreshSelection();
         };
         _hud.LinkClicked += OnLink;
-        _hud.PanelsChanged += (outline, inspector, legend) =>
+        _hud.PanelsChanged += (outline, methods, inspector, legend) =>
         {
             _settings.ShowOutline = outline;
+            _settings.ShowMethods = methods;
             _settings.ShowInspector = inspector;
             _settings.ShowLegend = legend;
             _settings.Save();
+        };
+        _hud.Methods.PlayRequested += StartFromMember;
+        _hud.Outline.ItemVisibilityChanged += SetVisibility;
+        _hud.Outline.ShowAllRequested += ShowEverything;
+        _hud.ShowAllRequested += ShowEverything;
+        _hud.QuietFadeChanged += fade =>
+        {
+            _quietFade = fade;
+            _settings.QuietFade = fade;
+            _settings.Save();
+            ApplyVisibility();
         };
         _hud.PointerEnteredUi += ClearHover;
         _hud.Progress.CancelRequested += () => _analysis?.Cancel();
@@ -288,9 +307,10 @@ public partial class Main : Node3D
             PlaceMoleculeLabel(molecule);
         }
 
-        _hud.Outline.SetModel(_model);
+        _visibility = VisibilityStore.Load(graph.Repo.Root);
+        _hud.Outline.SetModel(_model, StateOf);
         UpdateLegend();
-        ApplyColors();
+        ApplyVisibility();
         FrameAll(true);
         ShowSummary();
 
@@ -415,6 +435,7 @@ public partial class Main : Node3D
         if (_model != null) _hud.ShowInfo(InfoText.ForAtom(atom, _model));
         _hud.Outline.Reveal("atom:" + atom.Id);
         _hud.SetSelection(atom.Name);
+        if (_model != null) _hud.Methods.ShowEntryPoints(_model, CanPlay);
         if (fly) _camera.FlyTo(atom.Position, _openRadius * 2.4f + 4f);
     }
 
@@ -423,7 +444,11 @@ public partial class Main : Node3D
         if (_focusAtom != node.Atom) FocusAtom(node.Atom, fly: false);
         _selectedNode = node;
         RefreshSelection();
-        if (_model != null) _hud.ShowInfo(InfoText.ForNode(node, _model));
+        if (_model != null)
+        {
+            _hud.ShowInfo(InfoText.ForNode(node, _model));
+            _hud.Methods.ShowMembers(node, _model, CanPlay);
+        }
         _hud.Outline.Reveal("node:" + node.Info.Id);
         _hud.SetSelection($"{node.Atom.Name} ▸ {node.Info.Name}");
         // Aim at where the class will be once the atom is fully open.
@@ -512,6 +537,12 @@ public partial class Main : Node3D
         _simStarts.Clear();
         _simStarts.UnionWith(startNodes);
         foreach (var node in _simStarts) _heat[node] = 1f;
+
+        // Every label hides; the start classes count as already reached.
+        _labels?.SetSimulation(true);
+        _revealedAtoms.Clear();
+        foreach (var node in _simStarts) RevealLabel(node);
+
         _simPlan = plan;
         _simLoop = loop;
         _simTick = 1;
@@ -529,6 +560,34 @@ public partial class Main : Node3D
     {
         _heat[node] = Mathf.Min(1f, _heat.GetValueOrDefault(node) + amount);
         _visits[node] = _visits.GetValueOrDefault(node) + 1;
+        RevealLabel(node);
+    }
+
+    /// <summary>The flow reached a class: label it, and name its system.</summary>
+    private void RevealLabel(NodeData node)
+    {
+        if (node.IsHidden) return;
+        _labels?.Reveal(node);
+        if (!_revealedAtoms.Add(node.Atom)) return;
+        node.Atom.View?.SetLabelPinned(true, true);
+        _focusView?.SetPinnedAtoms(_revealedAtoms, true);
+    }
+
+    /// <summary>Play button in the Methods panel: simulate downstream from exactly this member.</summary>
+    private void StartFromMember(string memberId)
+    {
+        if (_model == null || _simulation == null) return;
+        var graph = _flowGraph ??= FlowGraph.For(_model);
+        var owner = graph.OwnerOf(memberId);
+        if (!graph.MemberLevel || owner == null)
+        {
+            _hud.SetStatus("This graph has no method-level data. Re-analyze the source folder (File ▸ Re-analyze).");
+            return;
+        }
+        var name = owner.Info.Members.FirstOrDefault(m => m.Id == memberId)?.Name ?? memberId;
+        var plan = FlowSimulator.Build(graph, new[] { memberId }, FlowDirection.Downstream, _includeData,
+            $"Flow from {owner.Info.Name}.{name}");
+        BeginSimulation(graph, plan, new[] { owner }, loop: false);
     }
 
     private void OnSimulationFinished()
@@ -574,6 +633,8 @@ public partial class Main : Node3D
         _heat.Clear();
         _visits.Clear();
         _simStarts.Clear();
+        _revealedAtoms.Clear();
+        _labels?.SetSimulation(false);
         _simPlan = null;
         _simLoop = false;
         _simFinished = false;
@@ -584,7 +645,88 @@ public partial class Main : Node3D
 
     private void ShowSummary()
     {
-        if (_model != null) _hud.ShowInfo(InfoText.ForSummary(_model));
+        if (_model == null) return;
+        _hud.ShowInfo(InfoText.ForSummary(_model));
+        _hud.Methods.ShowEntryPoints(_model, CanPlay);
+    }
+
+    /// <summary>Whether the method list's ▶ has anything to play for this member.</summary>
+    private bool CanPlay(string memberId)
+    {
+        if (_model == null) return false;
+        var graph = _flowGraph ??= FlowGraph.For(_model);
+        return graph.MemberLevel && graph.Out(memberId).Count > 0;
+    }
+
+    // ---------------------------------------------------------------- hide / quiet
+
+    private Visibility StateOf(string key) => _visibility.GetValueOrDefault(key, Visibility.Shown);
+
+    private void SetVisibility(string key, Visibility state)
+    {
+        if (_model == null) return;
+        if (state == Visibility.Shown) _visibility.Remove(key);
+        else _visibility[key] = state;
+        VisibilityStore.Save(_model.Graph.Repo.Root, _visibility);
+        ApplyVisibility();
+    }
+
+    private void ShowEverything()
+    {
+        if (_model == null) return;
+        _visibility.Clear();
+        VisibilityStore.Save(_model.Graph.Repo.Root, _visibility);
+        ApplyVisibility();
+    }
+
+    /// <summary>
+    /// Effective visibility is the most restrictive of the item and its parents (project → system →
+    /// class). Hidden draws nothing (nor its bonds, links, ports, labels or pulses); quiet draws faded.
+    /// </summary>
+    private void ApplyVisibility()
+    {
+        if (_model == null) return;
+        float OpacityOf(Visibility state) => state switch
+        {
+            Visibility.Hidden => 0f,
+            Visibility.Quiet => _quietFade,
+            _ => 1f,
+        };
+        static Visibility Most(Visibility a, Visibility b) => (Visibility)Math.Max((int)a, (int)b);
+
+        foreach (var molecule in _model.Molecules)
+        {
+            var moleculeState = StateOf("molecule:" + molecule.Id);
+            molecule.Opacity = OpacityOf(moleculeState);
+            if (molecule.Label != null)
+            {
+                molecule.Label.Visible = molecule.Opacity > 0f;
+                var tint = Palette.MoleculeHue(molecule.Id);
+                molecule.Label.Modulate = new Color(tint.R, tint.G, tint.B, molecule.Opacity);
+            }
+            foreach (var atom in molecule.Atoms)
+            {
+                var atomState = Most(moleculeState, StateOf("atom:" + atom.Id));
+                atom.Opacity = OpacityOf(atomState);
+                atom.View?.SetOpacity(atom.Opacity);
+                foreach (var node in atom.Nodes) node.Opacity = OpacityOf(Most(atomState, StateOf("node:" + node.Info.Id)));
+            }
+        }
+
+        // Hidden selections go away.
+        if (_selectedNode is { IsHidden: true }) _selectedNode = null;
+        if (_focusAtom is { IsHidden: true }) ClearSelection();
+
+        _nucleons?.UpdateAll();
+        _bonds?.UpdateAll();
+        _focusView?.RefreshVisibility();
+        _simulation?.RefreshTrace();
+        _hud.Outline.RefreshStates();
+        RefreshSelection();
+
+        var hidden = _visibility.Count(kv => kv.Value == Visibility.Hidden);
+        var quiet = _visibility.Count(kv => kv.Value == Visibility.Quiet);
+        if (hidden + quiet > 0) _hud.SetStatus($"{hidden} hidden, {quiet} quiet · View ▸ Show Everything to reset");
     }
 
     private void OnLink(string meta)
@@ -644,9 +786,23 @@ public partial class Main : Node3D
     private void ApplyLabels()
     {
         if (_model == null || _labels == null) return;
-        var selectionActive = _selectedNode != null || _focusAtom != null;
+        var simulating = _simulation is { Active: true };
+        foreach (var molecule in _model.Molecules)
+        {
+            if (molecule.Label != null) molecule.Label.Visible = !simulating && molecule.Opacity > 0f;
+        }
 
-        var pinned = new HashSet<NodeData>(_simStarts);
+        if (simulating)
+        {
+            // Simulation: no labels except where the flow has been (revealed in OnNodeReached).
+            _labels.SetPinned(_anchor != null ? new[] { _anchor } : Array.Empty<NodeData>(), _anchor, true);
+            foreach (var atom in _model.AtomList) atom.View?.SetLabelPinned(_revealedAtoms.Contains(atom), true);
+            _focusView?.SetPinnedAtoms(_revealedAtoms, true);
+            return;
+        }
+
+        var selectionActive = _selectedNode != null || _focusAtom != null;
+        var pinned = new HashSet<NodeData>();
         if (_anchor != null) pinned.UnionWith(_lit);
         _labels.SetPinned(pinned, _anchor, _selectedNode != null);
 
@@ -719,7 +875,15 @@ public partial class Main : Node3D
 
     private void UpdateLegend() => _hud.SetLegend(_colorMode, _model?.HasGit ?? false, _model?.Graph.Repo.ChurnWindowDays);
 
-    private void ApplyColors() => _nucleons?.ApplyColors(NodeColor);
+    private void ApplyColors() => _nucleons?.ApplyColors(node => Faded(NodeColor(node), node.Opacity));
+
+    /// <summary>Quiet items blend toward the background and lose their glow.</summary>
+    private static Color Faded(Color color, float opacity)
+    {
+        if (opacity >= 1f) return color;
+        var rgb = Palette.Background.Lerp(new Color(color.R, color.G, color.B), opacity);
+        return new Color(rgb.R, rgb.G, rgb.B, color.A * opacity);
+    }
 
     private Color NodeColor(NodeData node)
     {
@@ -802,26 +966,28 @@ public partial class Main : Node3D
         bool Hot(NodeData a, NodeData b) =>
             _anchor == null || a == _anchor || b == _anchor || (_selectedNode != null && _lit.Contains(a) && _lit.Contains(b));
 
-        void Add(Vector3 from, Vector3 to, string kind, bool hot)
+        // Hidden ends draw nothing; quiet ends fade the line.
+        void Add(Vector3 from, Vector3 to, string kind, bool hot, NodeData a, NodeData b)
         {
-            if (lines.Count >= MaxFocusLines) return;
+            if (lines.Count >= MaxFocusLines || a.IsHidden || b.IsHidden) return;
             var color = Palette.EdgeKind(kind);
-            color.A = _anchor == null ? 0.32f : hot ? 0.95f : 0f;
-            if (color.A > 0f) lines.Add((from, to, color));
+            color.A = (_anchor == null ? 0.32f : hot ? 0.95f : 0f) * Mathf.Min(a.Opacity, b.Opacity);
+            if (color.A > 0.005f) lines.Add((from, to, color));
         }
 
         foreach (var node in atom.Nodes)
         {
+            if (node.IsHidden) continue;
             foreach (var edge in node.Outgoing)
             {
                 if (!_enabledKinds.Contains(edge.Kind) || !_model.Nodes.TryGetValue(edge.Target, out var target)) continue;
                 if (target.Atom == atom || DrawDirect(node, target))
                 {
-                    Add(node.WorldPosition, target.WorldPosition, edge.Kind, Hot(node, target));
+                    Add(node.WorldPosition, target.WorldPosition, edge.Kind, Hot(node, target), node, target);
                 }
                 else if (_focusView.PortPosition(target.Atom) is { } port)
                 {
-                    Add(node.WorldPosition, port, edge.Kind, Hot(node, target));
+                    Add(node.WorldPosition, port, edge.Kind, Hot(node, target), node, target);
                 }
             }
             foreach (var edge in node.Incoming)
@@ -830,11 +996,11 @@ public partial class Main : Node3D
                 if (source.Atom == atom) continue; // drawn once, from the outgoing side
                 if (DrawDirect(source, node))
                 {
-                    Add(source.WorldPosition, node.WorldPosition, edge.Kind, true);
+                    Add(source.WorldPosition, node.WorldPosition, edge.Kind, true, source, node);
                 }
                 else if (_focusView.PortPosition(source.Atom) is { } port)
                 {
-                    Add(port, node.WorldPosition, edge.Kind, Hot(source, node));
+                    Add(port, node.WorldPosition, edge.Kind, Hot(source, node), source, node);
                 }
             }
         }
@@ -1137,6 +1303,7 @@ public partial class Main : Node3D
         var bestDistance = float.MaxValue;
         foreach (var atom in _model.AtomList)
         {
+            if (atom.IsHidden) continue;
             var radius = atom == _opened ? atom.DisplayRadius * 0.9f : atom.Radius * 0.8f;
             if (RaySphere(origin, direction, atom.Position, radius) is { } t && t < bestDistance)
             {
@@ -1155,6 +1322,7 @@ public partial class Main : Node3D
         var bestDistance = float.MaxValue;
         foreach (var node in atom.Nodes)
         {
+            if (node.IsHidden) continue;
             if (RaySphere(origin, direction, node.WorldPosition, node.Radius * 1.4f) is { } t && t < bestDistance)
             {
                 best = node;
@@ -1173,6 +1341,7 @@ public partial class Main : Node3D
         var bestDistance = float.MaxValue;
         foreach (var port in _focusView.Ports)
         {
+            if (port.Other.IsHidden) continue;
             if (RaySphere(origin, direction, port.Position, 0.45f) is { } t && t < bestDistance)
             {
                 best = port;

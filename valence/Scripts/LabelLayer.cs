@@ -5,10 +5,11 @@ using Godot;
 namespace Valence.Viewer;
 
 /// <summary>
-/// Class-name labels. Two kinds:
+/// Class-name labels. Normally two kinds:
 ///  - <b>opened</b>: every class in the opened system, visible only as the camera gets close;
 ///  - <b>pinned</b>: the selection (or search result) and everything connected to it, always visible
 ///    wherever those classes are. While a selection is active, only pinned labels show.
+/// During a simulation every label hides, and a class's label appears only once the flow reaches it.
 /// </summary>
 public partial class LabelLayer : Node3D
 {
@@ -17,8 +18,10 @@ public partial class LabelLayer : Node3D
     private readonly Dictionary<NodeData, Label3D> _labels = new();
     private readonly HashSet<NodeData> _opened = new();
     private readonly HashSet<NodeData> _pinned = new();
+    private readonly HashSet<NodeData> _revealed = new();
     private NodeData? _anchor;
     private bool _exclusive;
+    private bool _simulation;
     private float _openFade = 1f;
     private float _zoomRange = 14f;
 
@@ -54,15 +57,35 @@ public partial class LabelLayer : Node3D
         Sync();
     }
 
+    /// <summary>Entering or leaving simulation. Entering hides every label until <see cref="Reveal"/>.</summary>
+    public void SetSimulation(bool on)
+    {
+        _simulation = on;
+        _revealed.Clear();
+        Sync();
+    }
+
+    /// <summary>The flow reached this class: show its label (simulation only).</summary>
+    public void Reveal(NodeData node)
+    {
+        if (!_simulation || !_revealed.Add(node)) return;
+        if (!_labels.TryGetValue(node, out var label)) label = Create(node);
+        label.Position = LabelPosition(node);
+        Apply(node, label);
+    }
+
     public void UpdatePositions()
     {
-        foreach (var (node, label) in _labels) label.Position = node.WorldPosition + Vector3.Up * (node.Radius + 0.15f);
+        foreach (var (node, label) in _labels) label.Position = LabelPosition(node);
     }
+
+    private static Vector3 LabelPosition(NodeData node) => node.WorldPosition + Vector3.Up * (node.Radius + 0.15f);
 
     private void Sync()
     {
         var wanted = new HashSet<NodeData>(_opened);
         wanted.UnionWith(_pinned);
+        wanted.UnionWith(_revealed);
 
         foreach (var node in _labels.Keys.Where(n => !wanted.Contains(n)).ToList())
         {
@@ -71,33 +94,44 @@ public partial class LabelLayer : Node3D
         }
         foreach (var node in wanted)
         {
-            if (_labels.ContainsKey(node)) continue;
-            var label = new Label3D
-            {
-                Text = node.Info.Name,
-                FontSize = 32,
-                PixelSize = PixelSize,
-                FixedSize = true,
-                OutlineSize = 10,
-                Billboard = BaseMaterial3D.BillboardModeEnum.Enabled,
-                NoDepthTest = true,
-                RenderPriority = 1,
-                VisibilityRangeEndMargin = 3f,
-                VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Self,
-            };
-            AddChild(label);
-            _labels[node] = label;
+            if (!_labels.ContainsKey(node)) Create(node);
         }
 
         UpdatePositions();
         foreach (var (node, label) in _labels) Apply(node, label);
     }
 
+    private Label3D Create(NodeData node)
+    {
+        var label = new Label3D
+        {
+            Text = node.Info.Name,
+            FontSize = 32,
+            PixelSize = PixelSize,
+            FixedSize = true,
+            OutlineSize = 10,
+            Billboard = BaseMaterial3D.BillboardModeEnum.Enabled,
+            NoDepthTest = true,
+            RenderPriority = 1,
+            VisibilityRangeEndMargin = 3f,
+            VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Self,
+        };
+        AddChild(label);
+        _labels[node] = label;
+        return label;
+    }
+
     private void Apply(NodeData node, Label3D label)
     {
         var color = node == _anchor ? Colors.White : Palette.NodeKind(node.Info.Kind).Lightened(0.35f);
         float alpha;
-        if (_pinned.Contains(node))
+        if (_simulation)
+        {
+            // Only classes the flow has reached (and the selection itself) are labeled.
+            label.VisibilityRangeEnd = 0f;
+            alpha = _revealed.Contains(node) || node == _anchor ? 1f : 0f;
+        }
+        else if (_pinned.Contains(node))
         {
             label.VisibilityRangeEnd = 0f; // always visible
             alpha = _opened.Contains(node) ? _openFade : 1f;
@@ -111,6 +145,7 @@ public partial class LabelLayer : Node3D
             label.VisibilityRangeEnd = _zoomRange;
             alpha = _openFade;
         }
+        alpha *= node.Opacity; // hidden → no label; quiet → faded
         label.Visible = alpha > 0.01f;
         label.Modulate = new Color(color.R, color.G, color.B, alpha);
         label.OutlineModulate = new Color(0f, 0f, 0f, alpha);

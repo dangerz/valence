@@ -56,7 +56,7 @@ public partial class NucleonRenderer : MultiMeshInstance3D
     private void Place(NodeData node)
     {
         if (_multimesh == null) return;
-        var r = node.Radius;
+        var r = node.IsHidden ? 0f : node.Radius; // hidden: collapse the instance
         var basis = new Basis(new Vector3(r, 0f, 0f), new Vector3(0f, r, 0f), new Vector3(0f, 0f, r));
         _multimesh.SetInstanceTransform(node.Index, new Transform3D(basis, node.WorldPosition));
     }

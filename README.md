@@ -29,14 +29,24 @@ height stays tied to the dependency layer so the picture keeps its meaning.
 Labels stay out of the way: class and system names appear as you zoom in. Select a class (click it
 or find it with ⌘F) and only it and everything it connects to are labeled, wherever they are.
 
+**Hide and quiet.** Every row in the Outline has a visibility button on its left (● shown,
+◐ quiet, ○ hidden; click to cycle, right-click for options). Hiding a project, system or class
+removes it, everything inside it, and every bond, link, port, label and pulse attached to it.
+Quiet still draws it, faded; pick how faded with View ▸ Quiet Fade. Choices are saved per repo;
+View ▸ Show Everything resets them.
+
 ### Simulate
 
 The analysis records methods, properties, fields and events, the calls and reads/writes between
 them in source order, event and signal wiring, and entry points (Godot `_Process`, `_Ready`,
 `Main`, event handlers). The **Simulate** menu plays that statically. Nothing is run:
 
+* **Methods panel** (right, above the Inspector): the selected class's methods, or every entry
+  point when nothing is selected. Press **▶** next to a method (e.g. `World._Process`) to simulate
+  the flow from exactly that method.
 * **D / U**: flow *downstream* from the selected class (what it reaches) or *upstream* into it
   (what reaches it). Pulses travel the links hop by hop, in the order the calls are written.
+* While a simulation runs, all labels hide; a class is labeled the moment the flow reaches it.
 * **G**: play the **game loop**: every `_Process` / `_PhysicsProcess` / `_Draw`, tick after tick.
 * **Simulate ▸ Play Trigger**: startup, input, event handlers, web requests…
 * Space pauses/resumes, Simulate ▸ Speed changes pace, Esc stops. Classes heat up as the flow

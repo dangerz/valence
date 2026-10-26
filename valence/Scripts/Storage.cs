@@ -87,6 +87,64 @@ public static class LayoutStore
     }
 }
 
+public enum Visibility
+{
+    Shown = 0,
+    Quiet = 1,
+    Hidden = 2,
+}
+
+/// <summary>
+/// Hidden/quiet items per repo, in user://visibility. Keys are "molecule:&lt;id&gt;", "atom:&lt;id&gt;"
+/// or "node:&lt;id&gt;"; anything not listed is shown.
+/// </summary>
+public static class VisibilityStore
+{
+    public static Dictionary<string, Visibility> Load(string repoRoot)
+    {
+        var result = new Dictionary<string, Visibility>(StringComparer.Ordinal);
+        try
+        {
+            var path = PathFor(repoRoot);
+            if (!File.Exists(path)) return result;
+            var stored = JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(path));
+            if (stored == null) return result;
+            foreach (var (key, value) in stored)
+            {
+                if (Enum.TryParse<Visibility>(value, ignoreCase: true, out var state) && state != Visibility.Shown) result[key] = state;
+            }
+        }
+        catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException)
+        {
+            GD.PushWarning($"Could not read saved visibility: {e.Message}");
+        }
+        return result;
+    }
+
+    public static void Save(string repoRoot, Dictionary<string, Visibility> states)
+    {
+        try
+        {
+            var path = PathFor(repoRoot);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            var stored = new Dictionary<string, string>();
+            foreach (var (key, state) in states) stored[key] = state.ToString().ToLowerInvariant();
+            File.WriteAllText(path, JsonSerializer.Serialize(stored));
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            GD.PushWarning($"Could not save visibility: {e.Message}");
+        }
+    }
+
+    private static string PathFor(string repoRoot)
+    {
+        var key = string.IsNullOrEmpty(repoRoot) ? "(unknown)" : repoRoot;
+        var hash = Convert.ToHexString(SHA1.HashData(Encoding.UTF8.GetBytes(key)))[..16].ToLowerInvariant();
+        return Path.Combine(ProjectSettings.GlobalizePath("user://visibility"), hash + ".json");
+    }
+}
+
 /// <summary>Viewer preferences in user://viewer.json: last graph, recent folders, panel visibility.</summary>
 public sealed class ViewerSettings
 {
@@ -95,8 +153,12 @@ public sealed class ViewerSettings
     public string? LastGraph { get; set; }
     public List<string> RecentFolders { get; set; } = new();
     public bool ShowOutline { get; set; } = true;
+    public bool ShowMethods { get; set; } = true;
     public bool ShowInspector { get; set; } = true;
     public bool ShowLegend { get; set; } = true;
+
+    /// <summary>How visible "quiet" items are, 0..1.</summary>
+    public float QuietFade { get; set; } = 0.15f;
 
     private static string SettingsPath => ProjectSettings.GlobalizePath("user://viewer.json");
 
