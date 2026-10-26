@@ -153,6 +153,53 @@ public static class VisibilityStore
     }
 }
 
+/// <summary>
+/// Favorites per repo, in user://favorites: Outline keys ("molecule:", "atom:", "node:" + id) shown
+/// in a Favorites section at the top of the Outline.
+/// </summary>
+public static class FavoritesStore
+{
+    public static HashSet<string> Load(string repoRoot)
+    {
+        var result = new HashSet<string>(StringComparer.Ordinal);
+        try
+        {
+            var path = PathFor(repoRoot);
+            if (!File.Exists(path)) return result;
+            var stored = JsonSerializer.Deserialize<List<string>>(File.ReadAllText(path));
+            if (stored != null) result.UnionWith(stored);
+        }
+        catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException)
+        {
+            GD.PushWarning($"Could not read favorites: {e.Message}");
+        }
+        return result;
+    }
+
+    public static void Save(string repoRoot, IEnumerable<string> favorites)
+    {
+        try
+        {
+            var path = PathFor(repoRoot);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            var sorted = new List<string>(favorites);
+            sorted.Sort(StringComparer.Ordinal);
+            File.WriteAllText(path, JsonSerializer.Serialize(sorted));
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            GD.PushWarning($"Could not save favorites: {e.Message}");
+        }
+    }
+
+    private static string PathFor(string repoRoot)
+    {
+        var key = string.IsNullOrEmpty(repoRoot) ? "(unknown)" : repoRoot;
+        var hash = Convert.ToHexString(SHA1.HashData(Encoding.UTF8.GetBytes(key)))[..16].ToLowerInvariant();
+        return Path.Combine(ProjectSettings.GlobalizePath("user://favorites"), hash + ".json");
+    }
+}
+
 /// <summary>Viewer preferences in user://viewer.json: last graph, recent folders, panel visibility.</summary>
 public sealed class ViewerSettings
 {

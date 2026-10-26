@@ -57,10 +57,16 @@ public partial class Main : Node3D
     private float _colorCooldown;
     private readonly HashSet<AtomData> _revealedAtoms = new();
 
+    // Gold flash: seconds left for each class a pulse just landed on.
+    private const float FlashSeconds = 2f;
+    private const float FlashFadeSeconds = 0.35f;
+    private readonly Dictionary<NodeData, float> _flash = new();
+
     // Hide / quiet: per-item states (key "molecule:/atom:/node:" + id) and the quiet fade level.
     private Dictionary<string, Visibility> _visibility = new(StringComparer.Ordinal);
     private float _quietFade = 0.15f;
     private UntouchedMode _untouched = UntouchedMode.Show;
+    private HashSet<string> _favorites = new(StringComparer.Ordinal);
     private Dictionary<string, Vector2> _pins = new();
     private ColorMode _colorMode = ColorMode.Visibility;
     private int _linkDepth = 1;
@@ -136,6 +142,12 @@ public partial class Main : Node3D
             if (_simulation.Playing)
             {
                 foreach (var node in _heat.Keys.ToList()) _heat[node] = Mathf.Max(0.12f, _heat[node] - (float)delta * 0.6f);
+                foreach (var node in _flash.Keys.ToList())
+                {
+                    var left = _flash[node] - (float)delta;
+                    if (left <= 0f) _flash.Remove(node);
+                    else _flash[node] = left;
+                }
             }
             _colorCooldown -= (float)delta;
             if (_colorCooldown <= 0f)
@@ -185,6 +197,8 @@ public partial class Main : Node3D
             _settings.Save();
         };
         _hud.Methods.PlayRequested += StartFromMember;
+        _hud.Methods.ClassChosen += OnLink;
+        _hud.Outline.FavoriteToggled += ToggleFavorite;
         _hud.Outline.ItemVisibilityChanged += SetVisibility;
         _hud.Outline.ShowAllRequested += ShowEverything;
         _hud.ShowAllRequested += ShowEverything;
@@ -319,7 +333,8 @@ public partial class Main : Node3D
         }
 
         _visibility = VisibilityStore.Load(graph.Repo.Root);
-        _hud.Outline.SetModel(_model, StateOf);
+        _favorites = FavoritesStore.Load(graph.Repo.Root);
+        _hud.Outline.SetModel(_model, StateOf, _favorites);
         UpdateLegend();
         ApplyVisibility();
         FrameAll(true);
@@ -544,6 +559,7 @@ public partial class Main : Node3D
             return;
         }
         _heat.Clear();
+        _flash.Clear();
         _visits.Clear();
         _simStarts.Clear();
         _simStarts.UnionWith(startNodes);
@@ -570,6 +586,7 @@ public partial class Main : Node3D
     {
         _heat[node] = Mathf.Min(1f, _heat.GetValueOrDefault(node) + amount);
         _visits[node] = _visits.GetValueOrDefault(node) + 1;
+        _flash[node] = FlashSeconds; // gold for two seconds, then back to normal
         RevealLabel(node);
     }
 
@@ -656,6 +673,7 @@ public partial class Main : Node3D
     {
         _simulation?.Stop();
         _heat.Clear();
+        _flash.Clear();
         _visits.Clear();
         _simStarts.Clear();
         _revealedAtoms.Clear();
@@ -693,6 +711,17 @@ public partial class Main : Node3D
         else _visibility[key] = state;
         VisibilityStore.Save(_model.Graph.Repo.Root, _visibility);
         ApplyVisibility();
+    }
+
+    /// <summary>Outline right-click ▸ Add/Remove from Favorites; saved per repo.</summary>
+    private void ToggleFavorite(string key, bool favorite)
+    {
+        if (_model == null) return;
+        if (favorite) _favorites.Add(key);
+        else _favorites.Remove(key);
+        FavoritesStore.Save(_model.Graph.Repo.Root, _favorites);
+        _hud.Outline.RefreshFavorites();
+        _hud.SetStatus(favorite ? "Added to Favorites (top of the Outline)." : "Removed from Favorites.");
     }
 
     private void ShowEverything()
@@ -947,12 +976,18 @@ public partial class Main : Node3D
 
         if (_simulation is { Active: true })
         {
-            // Simulation: classes the flow has reached glow with their heat; the rest fade back.
+            // Simulation: a class turns gold for two seconds when the flow pings it, then returns to
+            // its normal color; classes not reached yet are dimmed.
             if (node == _anchor) return new Color(Palette.Selected.R, Palette.Selected.G, Palette.Selected.B, 1f);
-            if (_heat.TryGetValue(node, out var heat))
+            if (_flash.TryGetValue(node, out var left))
             {
-                color = color.Lerp(Colors.White, heat * 0.35f);
-                glow = Mathf.Max(glow * 0.3f, heat);
+                var gold = left > FlashFadeSeconds ? 1f : left / FlashFadeSeconds;
+                color = color.Lerp(Palette.Gold, gold);
+                glow = Mathf.Max(glow * 0.3f, gold);
+            }
+            else if (_heat.TryGetValue(node, out var heat))
+            {
+                glow = Mathf.Max(glow * 0.3f, heat * 0.4f);
             }
             else
             {

@@ -29,6 +29,9 @@ height stays tied to the dependency layer so the picture keeps its meaning.
 Labels stay out of the way: class and system names appear as you zoom in. Select a class (click it
 or find it with ⌘F) and only it and everything it connects to are labeled, wherever they are.
 
+**Favorites.** Right-click anything in the Outline ▸ ★ Add to Favorites; favorites are listed at
+the top of the Outline and saved per repo. Lists throughout are alphabetical.
+
 **Hide and quiet.** Every row in the Outline has a visibility button on its left (● shown,
 ◐ quiet, ○ hidden; click to cycle, right-click for options). Hiding a project, system or class
 removes it, everything inside it, and every bond, link, port, label and pulse attached to it.
@@ -43,7 +46,9 @@ them in source order, event and signal wiring, and entry points (Godot `_Process
 
 * **Methods panel** (right, above the Inspector): the selected class's methods, or every entry
   point when nothing is selected. Press **▶** next to a method (e.g. `World._Process`) to simulate
-  the flow from exactly that method.
+  the flow from exactly that method. Its search box searches every method in the repo (Enter plays
+  the first match; click a name to select its class).
+* Each class turns **gold** for two seconds when the flow reaches it, then returns to normal.
 * **D / U**: flow *downstream* from the selected class (what it reaches) or *upstream* into it
   (what reaches it). Pulses travel the links hop by hop, in the order the calls are written.
 * While a simulation runs, all labels hide; a class is labeled the moment the flow reaches it.

@@ -35,10 +35,10 @@ public static class InfoText
         if (entries.Count > 0)
         {
             sb.Append($"\n[b]Entry points[/b] ({entries.Count})\n");
-            foreach (var group in entries.GroupBy(e => e.Trigger).OrderBy(g => TriggerOrder(g.Key)))
+            foreach (var group in entries.GroupBy(e => e.Trigger).OrderBy(g => g.Key, StringComparer.Ordinal))
             {
                 sb.Append($"[color={EntryColor}]▶ {Esc(group.Key)}[/color] ");
-                var links = group.Take(MaxLinksPerGroup).Select(e =>
+                var links = group.OrderBy(e => e.Label, StringComparer.OrdinalIgnoreCase).Take(MaxLinksPerGroup).Select(e =>
                     model.MemberOwners.TryGetValue(e.Member, out var owner)
                         ? $"[url=node:{owner.Info.Id}]{Esc(e.Label)}[/url]"
                         : Esc(e.Label));
@@ -134,15 +134,15 @@ public static class InfoText
 
         var bonds = model.Bonds.Where(b => b.A == atom || b.B == atom).ToList();
         AppendBonds(sb, "Depends on systems", bonds.Where(b => b.WeightFrom(atom) > 0)
-            .OrderByDescending(b => b.WeightFrom(atom)).Select(b => (b, b.WeightFrom(atom))), atom);
+            .OrderBy(b => b.Other(atom).Name, StringComparer.OrdinalIgnoreCase).Select(b => (b, b.WeightFrom(atom))), atom);
         AppendBonds(sb, "Used by systems", bonds.Where(b => b.WeightFrom(b.Other(atom)) > 0)
-            .OrderByDescending(b => b.WeightFrom(b.Other(atom))).Select(b => (b, b.WeightFrom(b.Other(atom)))), atom);
+            .OrderBy(b => b.Other(atom).Name, StringComparer.OrdinalIgnoreCase).Select(b => (b, b.WeightFrom(b.Other(atom)))), atom);
 
         var entryCount = atom.Nodes.SelectMany(n => n.Info.Members).Count(m => model.EntryPointsByMember.ContainsKey(m.Id));
         if (entryCount > 0) sb.Append($"\n[color={EntryColor}]▶ {entryCount} entry points in this system[/color]\n");
 
-        sb.Append("\n[b]Classes[/b] (most depended-on first)\n");
-        foreach (var node in atom.Nodes.OrderByDescending(n => n.FanIn).ThenBy(n => n.Info.Name).Take(80))
+        sb.Append("\n[b]Classes[/b]\n");
+        foreach (var node in atom.Nodes.OrderBy(n => n.Info.Name, StringComparer.OrdinalIgnoreCase).Take(80))
         {
             sb.Append($"{NodeLink(node)} [color={Muted}]{node.FanIn}↓ {node.FanOut}↑[/color]\n");
         }
@@ -156,9 +156,8 @@ public static class InfoText
         if (members.Count == 0) return;
         sb.Append($"\n[b]Members[/b] ({members.Count})\n");
         foreach (var member in members
-                     .OrderBy(m => model.EntryPointsByMember.ContainsKey(m.Id) ? 0 : 1)
+                     .OrderBy(m => m.Name, StringComparer.OrdinalIgnoreCase)
                      .ThenBy(m => KindOrder(m.Kind))
-                     .ThenBy(m => m.Line)
                      .Take(MaxMembers))
         {
             sb.Append($"[color={Muted}]{KindGlyph(member.Kind)}[/color] {Esc(member.Signature ?? member.Name)}");
@@ -194,7 +193,7 @@ public static class InfoText
             var group = visible.Where(e => e.Kind == kind)
                 .Select(e => (Node: model.Nodes.GetValueOrDefault(other(e)), e.Weight, e.Confidence))
                 .Where(x => x.Node != null)
-                .OrderByDescending(x => x.Weight)
+                .OrderBy(x => x.Node!.Info.Name, StringComparer.OrdinalIgnoreCase)
                 .ToList();
             if (group.Count == 0) continue;
             var links = group.Take(MaxLinksPerGroup)
@@ -206,19 +205,6 @@ public static class InfoText
             sb.Append('\n');
         }
     }
-
-    private static int TriggerOrder(string trigger) => trigger switch
-    {
-        Triggers.Startup => 0,
-        Triggers.Frame => 1,
-        Triggers.Physics => 2,
-        Triggers.Input => 3,
-        Triggers.Draw => 4,
-        Triggers.Event => 5,
-        Triggers.Request => 6,
-        Triggers.Job => 7,
-        _ => 8,
-    };
 
     private static int KindOrder(string kind) => kind switch
     {

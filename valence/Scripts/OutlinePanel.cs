@@ -6,9 +6,10 @@ using Godot;
 namespace Valence.Viewer;
 
 /// <summary>
-/// Searchable tree: project → system → class. Picking an item selects it in 3D, so finding
-/// something never means clicking around in the scene. The left column is a visibility toggle per
-/// item: click it to cycle Shown → Quiet → Hidden; right-click a row for the same choices.
+/// Searchable tree: ★ Favorites, then project → system → class, all alphabetical. Picking an item
+/// selects it in 3D, so finding something never means clicking around in the scene. The left
+/// column is a visibility toggle per item: click it to cycle Shown → Quiet → Hidden; right-click a
+/// row for those choices and to add or remove it from Favorites.
 /// </summary>
 public partial class OutlinePanel : PanelContainer
 {
@@ -18,13 +19,20 @@ public partial class OutlinePanel : PanelContainer
     private const int MenuQuiet = 1;
     private const int MenuHide = 2;
     private const int MenuShowAll = 3;
+    private const int MenuFavorite = 4;
 
+    /// <summary>Main tree rows by key (what <see cref="Reveal"/> selects).</summary>
     private readonly Dictionary<string, TreeItem> _items = new(StringComparer.Ordinal);
+
+    /// <summary>Rows in the Favorites section, by key.</summary>
+    private readonly Dictionary<string, TreeItem> _favoriteItems = new(StringComparer.Ordinal);
+
     private LineEdit? _filter;
     private Tree? _tree;
     private PopupMenu? _context;
     private GraphModel? _model;
     private Func<string, Visibility> _stateOf = _ => Visibility.Shown;
+    private ISet<string> _favorites = new HashSet<string>();
     private string? _contextKey;
     private bool _suppressSelection;
 
@@ -36,6 +44,9 @@ public partial class OutlinePanel : PanelContainer
 
     /// <summary>Show everything again.</summary>
     public event Action? ShowAllRequested;
+
+    /// <summary>Key, and whether it should now be a favorite.</summary>
+    public event Action<string, bool>? FavoriteToggled;
 
     public void Build()
     {
@@ -67,12 +78,18 @@ public partial class OutlinePanel : PanelContainer
         _tree.ItemMouseSelected += OnItemMouseSelected;
         column.AddChild(_tree);
 
-        var hint = new Label { Text = "● shown  ◐ quiet  ○ hidden: click to cycle, right-click for more" };
+        var hint = new Label
+        {
+            Text = "● shown  ◐ quiet  ○ hidden: click to cycle · right-click for ★ favorites and more",
+            AutowrapMode = TextServer.AutowrapMode.WordSmart,
+        };
         hint.AddThemeFontSizeOverride("font_size", 11);
         hint.AddThemeColorOverride("font_color", Palette.MutedText);
         column.AddChild(hint);
 
         _context = new PopupMenu();
+        _context.AddItem("★ Add to Favorites", MenuFavorite);
+        _context.AddSeparator();
         _context.AddItem("Show", MenuShow);
         _context.AddItem("Quiet (faded)", MenuQuiet);
         _context.AddItem("Hide", MenuHide);
@@ -82,18 +99,23 @@ public partial class OutlinePanel : PanelContainer
         AddChild(_context);
     }
 
-    public void SetModel(GraphModel? model, Func<string, Visibility> stateOf)
+    public void SetModel(GraphModel? model, Func<string, Visibility> stateOf, ISet<string> favorites)
     {
         _model = model;
         _stateOf = stateOf;
+        _favorites = favorites;
         if (_filter != null) _filter.Text = "";
         Rebuild();
     }
+
+    /// <summary>Favorites changed: rebuild, keeping the current filter.</summary>
+    public void RefreshFavorites() => Rebuild();
 
     /// <summary>Re-reads every item's visibility after a change.</summary>
     public void RefreshStates()
     {
         foreach (var (key, item) in _items) ApplyState(item, key);
+        foreach (var (key, item) in _favoriteItems) ApplyState(item, key);
     }
 
     public void FocusFilter()
@@ -119,11 +141,16 @@ public partial class OutlinePanel : PanelContainer
         _suppressSelection = false;
     }
 
+    // ---------------------------------------------------------------- building
+
+    private static readonly StringComparer ByName = StringComparer.OrdinalIgnoreCase;
+
     private void Rebuild()
     {
         if (_tree == null) return;
         _tree.Clear();
         _items.Clear();
+        _favoriteItems.Clear();
         if (_model == null) return;
 
         var filter = _filter?.Text.Trim() ?? "";
@@ -131,10 +158,12 @@ public partial class OutlinePanel : PanelContainer
         bool Matches(string text) => text.Contains(filter, StringComparison.OrdinalIgnoreCase);
 
         var root = _tree.CreateItem();
-        foreach (var molecule in _model.Molecules)
+        BuildFavorites(root, filtering ? new Func<string, bool>(Matches) : null);
+
+        foreach (var molecule in _model.Molecules.OrderBy(m => m.Name, ByName))
         {
             TreeItem? moleculeItem = null;
-            foreach (var atom in molecule.Atoms)
+            foreach (var atom in molecule.Atoms.OrderBy(a => a.Name, ByName))
             {
                 var atomMatches = filtering && Matches(atom.Name);
                 var nodes = filtering && !atomMatches
@@ -145,35 +174,72 @@ public partial class OutlinePanel : PanelContainer
                 if (moleculeItem == null)
                 {
                     moleculeItem = _tree.CreateItem(root);
-                    moleculeItem.SetText(NameColumn, molecule.Name);
-                    moleculeItem.SetCustomColor(NameColumn, Palette.MoleculeHue(molecule.Id));
-                    Register(moleculeItem, "molecule:" + molecule.Id);
+                    Register(moleculeItem, "molecule:" + molecule.Id, molecule.Name, _items);
                 }
 
                 var atomItem = _tree.CreateItem(moleculeItem);
-                atomItem.SetText(NameColumn, $"{atom.Name}  ({atom.Nodes.Count})");
+                Register(atomItem, "atom:" + atom.Id, $"{atom.Name}  ({atom.Nodes.Count})", _items);
                 atomItem.SetTooltipText(NameColumn, $"{atom.Name}: {atom.Nodes.Count} classes, valence {atom.Valence}");
                 atomItem.Collapsed = !filtering;
-                Register(atomItem, "atom:" + atom.Id);
 
-                foreach (var node in nodes.OrderBy(n => n.Info.Name, StringComparer.OrdinalIgnoreCase))
+                foreach (var node in nodes.OrderBy(n => n.Info.Name, ByName))
                 {
                     var nodeItem = _tree.CreateItem(atomItem);
-                    nodeItem.SetText(NameColumn, node.Info.Name);
+                    Register(nodeItem, "node:" + node.Info.Id, node.Info.Name, _items);
                     nodeItem.SetTooltipText(NameColumn, $"{node.Info.FullName}\n{node.Info.Kind} · {node.Info.Visibility}");
-                    Register(nodeItem, "node:" + node.Info.Id);
                 }
             }
         }
     }
 
-    private void Register(TreeItem item, string key)
+    /// <summary>★ Favorites at the top: projects, systems and classes, alphabetically.</summary>
+    private void BuildFavorites(TreeItem root, Func<string, bool>? matches)
     {
+        if (_model == null || _favorites.Count == 0) return;
+        var entries = _favorites
+            .Select(key => (Key: key, Name: DisplayName(key), Kind: KindLabel(key)))
+            .Where(e => e.Name != null && (matches == null || matches(e.Name)))
+            .OrderBy(e => e.Name, ByName)
+            .ToList();
+        if (entries.Count == 0) return;
+
+        var section = _tree!.CreateItem(root);
+        section.SetText(NameColumn, $"★ Favorites ({entries.Count})");
+        section.SetCustomColor(NameColumn, Palette.Gold);
+        section.SetSelectable(StateColumn, false);
+        section.SetSelectable(NameColumn, false);
+        foreach (var (key, name, kind) in entries)
+        {
+            var item = _tree.CreateItem(section);
+            Register(item, key, $"{name}  · {kind}", _favoriteItems);
+        }
+    }
+
+    private string? DisplayName(string key)
+    {
+        if (_model == null) return null;
+        if (key.StartsWith("node:", StringComparison.Ordinal))
+            return _model.Nodes.TryGetValue(key["node:".Length..], out var node) ? node.Info.Name : null;
+        if (key.StartsWith("atom:", StringComparison.Ordinal))
+            return _model.Atoms.TryGetValue(key["atom:".Length..], out var atom) ? atom.Name : null;
+        if (key.StartsWith("molecule:", StringComparison.Ordinal))
+            return _model.Molecules.FirstOrDefault(m => m.Id == key["molecule:".Length..])?.Name;
+        return null;
+    }
+
+    private static string KindLabel(string key) =>
+        key.StartsWith("node:", StringComparison.Ordinal) ? "class"
+        : key.StartsWith("atom:", StringComparison.Ordinal) ? "system"
+        : "project";
+
+    private void Register(TreeItem item, string key, string text, Dictionary<string, TreeItem> index)
+    {
+        item.SetText(NameColumn, _favorites.Contains(key) && index == _items ? "★ " + text : text);
         item.SetMetadata(NameColumn, key);
         item.SetMetadata(StateColumn, key);
         item.SetTextAlignment(StateColumn, HorizontalAlignment.Center);
         item.SetTooltipText(StateColumn, "Shown / Quiet / Hidden: click to cycle");
-        _items[key] = item;
+        index[key] = item;
         ApplyState(item, key);
     }
 
@@ -211,6 +277,8 @@ public partial class OutlinePanel : PanelContainer
         _ => Visibility.Shown,
     };
 
+    // ---------------------------------------------------------------- input
+
     private void ChooseFirstMatch()
     {
         var first = _items
@@ -246,6 +314,9 @@ public partial class OutlinePanel : PanelContainer
         var item = _tree.GetItemAtPosition(position);
         if (item == null) return;
         _contextKey = item.GetMetadata(NameColumn).AsString();
+        if (string.IsNullOrEmpty(_contextKey)) return;
+        var favoriteIndex = _context.GetItemIndex(MenuFavorite);
+        _context.SetItemText(favoriteIndex, _favorites.Contains(_contextKey) ? "☆ Remove from Favorites" : "★ Add to Favorites");
         _context.Position = (Vector2I)GetGlobalMousePosition();
         _context.Popup();
     }
@@ -258,6 +329,11 @@ public partial class OutlinePanel : PanelContainer
             return;
         }
         if (string.IsNullOrEmpty(_contextKey)) return;
+        if (id == MenuFavorite)
+        {
+            FavoriteToggled?.Invoke(_contextKey, !_favorites.Contains(_contextKey));
+            return;
+        }
         var state = id switch
         {
             MenuQuiet => Visibility.Quiet,

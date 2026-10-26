@@ -24,6 +24,9 @@ public static class Palette
     public static readonly Color Accent = Hex(0x7cc4ff);
     public static readonly Color PanelBorder = Hex(0x3a5a85);
 
+    /// <summary>Simulation: a class the flow just reached.</summary>
+    public static readonly Color Gold = Hex(0xffc83d);
+
     private static readonly Color HeatCold = Hex(0x2a4b8d);
     private static readonly Color HeatMid = Hex(0xd6336c);
     private static readonly Color HeatHot = Hex(0xffd43b);
