@@ -1,11 +1,11 @@
 using Valence.Schema;
 
-namespace Valence.Cli;
+namespace Valence.Core;
 
-internal sealed record DiscoveredProbe(ProbeManifest Manifest, string Directory);
+public sealed record DiscoveredProbe(ProbeManifest Manifest, string Directory);
 
 /// <summary>Finds probe.json manifests. A probe directory holds probe.json plus whatever it needs to run.</summary>
-internal static class ProbeRegistry
+public static class ProbeRegistry
 {
     public const string ManifestFileName = "probe.json";
     public const string EnvironmentVariable = "VALENCE_PROBES";

@@ -1,5 +1,6 @@
 using System.Diagnostics;
-using Valence.Cli;
+using Valence.Core;
+using Valence.Probe.CSharp;
 using Valence.Schema;
 
 // valence — runs language probes over a repo (read-only) and writes a merged graph for the viewer.
@@ -59,17 +60,22 @@ for (var i = 1; i < args.Length; i++)
 
 void Log(string message) => Console.Error.WriteLine(message);
 
-var probes = ProbeRegistry.Discover(ProbeRegistry.SearchPaths(probeDirs), Log);
+var options = new AnalyzeOptions
+{
+    UseGit = useGit,
+    ChurnDays = churnDays,
+    ExternalProbeTimeout = TimeSpan.FromMinutes(timeoutMinutes),
+};
+// C# is built in; other languages come from probe.json manifests (--probes, $VALENCE_PROBES, probes/).
+var probes = RepoAnalyzer.Combine(
+    new IProbe[] { new CSharpProbe() },
+    ProbeRegistry.Discover(ProbeRegistry.SearchPaths(probeDirs), Log),
+    options);
 
 switch (command)
 {
     case "probes":
-        if (probes.Count == 0) Log("no probes found (searched --probes, $VALENCE_PROBES, and probes/ next to valence)");
-        foreach (var probe in probes)
-        {
-            var m = probe.Manifest;
-            Console.WriteLine($"{m.Name,-12} {m.Version,-8} {string.Join(",", m.Extensions),-16} {probe.Directory}");
-        }
+        foreach (var probe in probes) Console.WriteLine($"{probe.Name,-12} {probe.Description}");
         return 0;
 
     case "analyze":
@@ -97,39 +103,22 @@ int Analyze()
     }
 
     // Never write into the repo being analyzed unless the user explicitly points --out there.
-    outPath ??= Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".valence", "graphs",
-        $"{Path.GetFileName(root)}.valence.json");
+    outPath ??= RepoAnalyzer.DefaultOutputPath(root);
 
     var stopwatch = Stopwatch.StartNew();
-    var timeout = TimeSpan.FromMinutes(timeoutMinutes);
-    var outputs = new List<ProbeOutput>();
-    foreach (var probe in probes)
+    Graph graph;
+    try
     {
-        if (!ProbeRunner.IsRelevant(probe.Manifest, root)) continue;
-        if (ProbeRunner.Run(probe, root, timeout, Log) is { } output) outputs.Add(output);
+        graph = RepoAnalyzer.Analyze(root, probes, options, Log);
     }
-
-    if (outputs.Count == 0)
+    catch (Exception e) when (e is InvalidOperationException or DirectoryNotFoundException)
     {
-        Log(probes.Count == 0
-            ? "no probes found; pass --probes <dir> or set $VALENCE_PROBES"
-            : "no probe produced output for this repo");
+        Log(e.Message);
         return 1;
     }
-
-    GitHistory? git = null;
-    if (useGit)
-    {
-        git = GitHistory.Open(root, Log);
-        git?.LoadChurn(churnDays, Log);
-    }
-
-    var graph = GraphBuilder.Build(root, outputs, git, useGit ? churnDays : null);
     ValenceJson.Write(outPath, graph);
 
-    Log($"{graph.Nodes.Count} nodes, {graph.Edges.Count} edges, {graph.Modules.Count} modules " +
-        $"in {stopwatch.Elapsed.TotalSeconds:F1}s");
+    Log($"done in {stopwatch.Elapsed.TotalSeconds:F1}s");
     Console.WriteLine(Path.GetFullPath(outPath));
     return 0;
 }

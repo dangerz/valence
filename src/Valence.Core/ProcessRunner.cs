@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 
-namespace Valence.Cli;
+namespace Valence.Core;
 
 internal sealed record ProcessResult(int ExitCode, string StdOut, bool TimedOut);
 

@@ -1,4 +1,4 @@
-namespace Valence.Cli;
+namespace Valence.Core;
 
 internal sealed class FileHistory
 {

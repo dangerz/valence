@@ -16,10 +16,10 @@ public partial class Hud : Control
     private RichTextLabel? _info;
     private RichTextLabel? _legendNucleons;
     private FileDialog? _openDialog;
-    private FileDialog? _analyzeDialog;
+    private FileDialog? _sourceDialog;
 
     public event Action<string>? GraphFileChosen;
-    public event Action<string>? AnalyzeFolderChosen;
+    public event Action<string>? SourceFolderChosen;
     public event Action<string>? SearchSubmitted;
     public event Action<ColorMode>? ColorModeChanged;
     public event Action? FrameAllRequested;
@@ -111,8 +111,8 @@ public partial class Hud : Control
         title.AddThemeColorOverride("font_color", Palette.Accent);
         bar.AddChild(title);
 
+        bar.AddChild(MakeButton("Open source folder…", () => Popup(_sourceDialog, null)));
         bar.AddChild(MakeButton("Open graph…", () => Popup(_openDialog, DefaultGraphDir())));
-        bar.AddChild(MakeButton("Analyze folder…", () => Popup(_analyzeDialog, null)));
         bar.AddChild(new VSeparator());
 
         _repoLabel = new Label
@@ -248,15 +248,15 @@ public partial class Hud : Control
         _openDialog.FileSelected += path => GraphFileChosen?.Invoke(path);
         AddChild(_openDialog);
 
-        _analyzeDialog = new FileDialog
+        _sourceDialog = new FileDialog
         {
-            Title = "Choose a repository folder to analyze (read-only)",
+            Title = "Open a source folder (it is only read, never changed)",
             FileMode = FileDialog.FileModeEnum.OpenDir,
             Access = FileDialog.AccessEnum.Filesystem,
             UseNativeDialog = true,
         };
-        _analyzeDialog.DirSelected += dir => AnalyzeFolderChosen?.Invoke(dir);
-        AddChild(_analyzeDialog);
+        _sourceDialog.DirSelected += dir => SourceFolderChosen?.Invoke(dir);
+        AddChild(_sourceDialog);
     }
 
     // ---------------------------------------------------------------- helpers

@@ -1,6 +1,6 @@
 using Valence.Schema;
 
-namespace Valence.Cli;
+namespace Valence.Core;
 
 /// <summary>Merges probe outputs into one graph and derives cross-language metrics.</summary>
 internal static class GraphBuilder

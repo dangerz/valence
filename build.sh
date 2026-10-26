@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Builds the Valence CLI and the bundled probes into dist/.
-#   dist/valence.dll            the CLI  (dotnet dist/valence.dll analyze <repo>)
-#   dist/probes/csharp/         the C# probe (found automatically next to the CLI)
-# The Godot viewer looks for dist/valence.dll to power "Analyze folder…".
+# Optional: builds the command-line tools into dist/. The Godot viewer doesn't need this;
+# "Open source folder…" runs the analysis in-process.
+#   dist/valence.dll            the CLI, with the C# probe built in (dotnet dist/valence.dll analyze <repo>)
+#   dist/probes/csharp/         the C# probe as a standalone plugin (for other tools / reference)
 set -euo pipefail
 cd "$(dirname "$0")"
 

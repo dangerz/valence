@@ -27,27 +27,32 @@ and height stays tied to the dependency layer so the picture keeps its meaning.
 
 ```
 src/Valence.Schema/   shared JSON contract (C# model of the probe + graph formats)
-src/Valence.Cli/      `valence` core: runs probes, merges, adds git churn, writes the graph
-probes/csharp/        C# probe (Roslyn); first language plugin
+src/Valence.Core/     analysis engine: runs probes, merges, adds git churn (used by viewer + CLI)
+src/Valence.Cli/      `valence` command-line front end (optional)
+probes/csharp/        C# probe (Roslyn): built in, and also runnable standalone
 valence/              Godot 4.7 (.NET) viewer
 docs/plugin-protocol.md   how to write a probe for another language
 ```
 
-Languages are plugins ("probes"): separate programs that speak a small JSON protocol, so each can
-be written in whatever language parses its target best. See [docs/plugin-protocol.md](docs/plugin-protocol.md).
+Languages are plugins ("probes"). C# is built in and runs in-process. Any other language is a
+separate program that speaks a small JSON protocol, so each can be written in whatever language
+parses its target best. See [docs/plugin-protocol.md](docs/plugin-protocol.md).
 
 ## Quick start
 
 Requirements: .NET 8 SDK, Godot 4.7 (.NET build).
 
+Open `valence/project.godot` in Godot and run it. It starts with a small demo graph. Click
+**Open source folder…** and pick a repo: it's analyzed in the background (read-only) and the
+result opens when done. The graph is also saved to `~/.valence/graphs/<folder>.valence.json`, which
+**Open graph…** can reopen instantly later.
+
+### Command line (optional)
+
 ```bash
-bash build.sh                                   # → dist/valence.dll + dist/probes/csharp/
+bash build.sh                                   # → dist/valence.dll (+ standalone dist/probes/csharp/)
 dotnet dist/valence.dll analyze ~/code/SomeRepo # → ~/.valence/graphs/SomeRepo.valence.json
 ```
-
-Then open `valence/project.godot` in Godot and run it. It starts with a small demo graph. Use
-**Open graph…** to load the file above, or **Analyze folder…** to run the CLI from inside the viewer
-(it finds `dist/valence.dll` automatically, or set `VALENCE_CLI`).
 
 CLI options:
 

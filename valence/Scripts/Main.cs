@@ -64,7 +64,7 @@ public partial class Main : Node3D
         canvas.AddChild(_hud);
 
         _hud.GraphFileChosen += LoadGraph;
-        _hud.AnalyzeFolderChosen += Analyze;
+        _hud.SourceFolderChosen += AnalyzeSourceFolder;
         _hud.SearchSubmitted += Search;
         _hud.ColorModeChanged += mode =>
         {
@@ -183,32 +183,39 @@ public partial class Main : Node3D
         if (!path.StartsWith("res://", StringComparison.Ordinal)) ViewerSettings.LastGraph = path;
     }
 
-    private void Analyze(string directory)
+    private void AnalyzeSourceFolder(string directory)
     {
         if (_analyzing)
         {
             _hud.SetStatus("An analysis is already running…");
             return;
         }
-        var cli = AnalyzerLauncher.FindCli();
-        if (cli == null)
-        {
-            _hud.SetStatus("Valence CLI not found. Run ./build.sh in the repo (creates dist/valence.dll) or set VALENCE_CLI.");
-            return;
-        }
 
         _analyzing = true;
         _hud.SetStatus($"Analyzing {directory} (read-only)…");
-        Task.Run(() => AnalyzerLauncher.Run(cli, directory, line => _mainThread.Enqueue(() => _hud.SetStatus(line))))
+        GD.Print($"[valence] analyzing {directory}");
+
+        void Progress(string line) => _mainThread.Enqueue(() =>
+        {
+            _hud.SetStatus(line.Trim());
+            GD.Print($"[valence] {line}");
+        });
+
+        Task.Run(() => AnalyzerLauncher.Analyze(directory, Progress))
             .ContinueWith(task =>
             {
                 var path = task.IsCompletedSuccessfully ? task.Result : null;
-                var error = task.Exception?.GetBaseException().Message;
+                var error = task.Exception?.GetBaseException();
                 _mainThread.Enqueue(() =>
                 {
                     _analyzing = false;
-                    if (path != null) LoadGraph(path);
-                    else _hud.SetStatus($"Analysis failed{(error != null ? ": " + error : "")}. See the log above.");
+                    if (path != null)
+                    {
+                        LoadGraph(path);
+                        return;
+                    }
+                    _hud.SetStatus($"Analysis failed: {error?.Message ?? "unknown error"}");
+                    GD.PushError($"[valence] analysis of {directory} failed: {error}");
                 });
             });
     }

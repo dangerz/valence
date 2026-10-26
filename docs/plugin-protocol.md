@@ -2,12 +2,18 @@
 
 A **probe** teaches Valence a language. It is a standalone program, written in whatever language
 parses that language best, that reads a repository and writes a JSON description of its types and
-their dependencies. The core (`valence`) runs probes as separate processes, merges their output,
-adds git history and metrics, and writes the graph the viewer loads.
+their dependencies. The core (`Valence.Core`, used by both the viewer and the `valence` CLI) runs
+probes as separate processes, merges their output, adds git history and metrics, and produces the
+graph the viewer draws.
 
 ```
-repo ──read-only──▶ probe(s) ──probe.json output──▶ valence core ──graph.json──▶ Godot viewer
+repo ──read-only──▶ probe(s) ──probe output──▶ Valence.Core ──graph.json──▶ Godot viewer
 ```
+
+**Built-in probes.** C# ships built in: `Valence.Core.IProbe` is implemented in-process by
+`CSharpProbe`, so the viewer can analyze a folder without any separately built tools. The same
+analyzer is still a normal probe (`probes/csharp`, `probe.json`), and its output is identical either
+way. When an external probe has the same `name` as a built-in one, the built-in wins.
 
 ## 1. The manifest: `probe.json`
 
@@ -32,7 +38,8 @@ Every probe directory contains a `probe.json`:
 | `command`    | Executable plus leading arguments. `{dir}` is replaced with the probe directory. |
 
 The core finds probes in, in order: each `--probes <dir>`, `$VALENCE_PROBES` (path-separated), and
-`probes/` next to the CLI. A search path may be a probe directory or a folder of probe directories.
+`probes/` next to the running program. The viewer also checks `dist/probes/` in this repo. A search
+path may be a probe directory or a folder of probe directories.
 
 ## 2. Invocation
 

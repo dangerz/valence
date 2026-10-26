@@ -8,10 +8,15 @@
     <RootNamespace>Valence.Cli</RootNamespace>
     <AssemblyName>valence</AssemblyName>
     <Version>0.1.0</Version>
+    <!-- The C# probe is also a standalone executable; we only use it as a library here. -->
+    <ValidateExecutableReferencesMatchSelfContained>false</ValidateExecutableReferencesMatchSelfContained>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="../Valence.Schema/Valence.Schema.csproj" />
+    <ProjectReference Include="../Valence.Core/Valence.Core.csproj" />
+    <!-- Built-in C# probe (runs in-process). -->
+    <ProjectReference Include="../../probes/csharp/Valence.Probe.CSharp.csproj" />
   </ItemGroup>
 
 </Project>

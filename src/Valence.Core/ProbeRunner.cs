@@ -1,44 +1,10 @@
 using Valence.Schema;
 
-namespace Valence.Cli;
+namespace Valence.Core;
 
+/// <summary>Runs an external (manifest-based) probe as a separate process.</summary>
 internal static class ProbeRunner
 {
-    private static readonly HashSet<string> SkipDirs = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "bin", "obj", "node_modules", "packages", "dist", "build", "artifacts",
-    };
-
-    /// <summary>True when the repo has at least one file with one of the probe's extensions.</summary>
-    public static bool IsRelevant(ProbeManifest manifest, string root)
-    {
-        if (manifest.Extensions.Count == 0) return true;
-        var extensions = new HashSet<string>(manifest.Extensions, StringComparer.OrdinalIgnoreCase);
-
-        var pending = new Stack<string>();
-        pending.Push(root);
-        while (pending.Count > 0)
-        {
-            var dir = pending.Pop();
-            try
-            {
-                if (Directory.EnumerateFiles(dir).Any(f => extensions.Contains(Path.GetExtension(f)))) return true;
-                foreach (var sub in Directory.EnumerateDirectories(dir))
-                {
-                    var name = Path.GetFileName(sub);
-                    if (name.StartsWith('.') || SkipDirs.Contains(name)) continue;
-                    if (new DirectoryInfo(sub).LinkTarget != null) continue;
-                    pending.Push(sub);
-                }
-            }
-            catch (Exception e) when (e is UnauthorizedAccessException or IOException)
-            {
-                // Unreadable folder: skip it.
-            }
-        }
-        return false;
-    }
-
     /// <summary>
     /// GUI-launched processes (e.g. the Godot viewer on macOS) often lack dotnet on PATH,
     /// so a manifest's "dotnet" reuses the host that is running the CLI when possible.
@@ -63,7 +29,6 @@ internal static class ProbeRunner
         var command = manifest.Command.Select(part => part.Replace("{dir}", probe.Directory)).ToList();
         var arguments = command.Skip(1).Concat(new[] { "--root", root, "--out", outFile });
 
-        log($"running probe '{manifest.Name}' ({manifest.DisplayName} {manifest.Version})");
         try
         {
             var result = ProcessRunner.Run(

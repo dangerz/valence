@@ -16,6 +16,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/Valence.Schema/Valence.Schema.csproj" />
+    <ProjectReference Include="../../src/Valence.Core/Valence.Core.csproj" />
   </ItemGroup>
 
   <ItemGroup>

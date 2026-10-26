@@ -2,6 +2,8 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Valence.Schema", "src\Valence.Schema\Valence.Schema.csproj", "{2C7E9B41-5D63-4A8F-B1E0-7D4C3A2F6B90}"
 EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Valence.Core", "src\Valence.Core\Valence.Core.csproj", "{7D3E2F1A-6B5C-4D8E-9F0A-1B2C3D4E5F60}"
+EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Valence.Cli", "src\Valence.Cli\Valence.Cli.csproj", "{8E4D1A2B-3C5F-4B6A-9D7E-0F1A2B3C4D5E}"
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Valence.Probe.CSharp", "probes\csharp\Valence.Probe.CSharp.csproj", "{4B5C6D7E-8F90-4A1B-8C2D-3E4F5A6B7C8D}"
@@ -16,6 +18,10 @@ Global
 		{2C7E9B41-5D63-4A8F-B1E0-7D4C3A2F6B90}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{2C7E9B41-5D63-4A8F-B1E0-7D4C3A2F6B90}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{2C7E9B41-5D63-4A8F-B1E0-7D4C3A2F6B90}.Release|Any CPU.Build.0 = Release|Any CPU
+		{7D3E2F1A-6B5C-4D8E-9F0A-1B2C3D4E5F60}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7D3E2F1A-6B5C-4D8E-9F0A-1B2C3D4E5F60}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7D3E2F1A-6B5C-4D8E-9F0A-1B2C3D4E5F60}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7D3E2F1A-6B5C-4D8E-9F0A-1B2C3D4E5F60}.Release|Any CPU.Build.0 = Release|Any CPU
 		{8E4D1A2B-3C5F-4B6A-9D7E-0F1A2B3C4D5E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{8E4D1A2B-3C5F-4B6A-9D7E-0F1A2B3C4D5E}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{8E4D1A2B-3C5F-4B6A-9D7E-0F1A2B3C4D5E}.Release|Any CPU.ActiveCfg = Release|Any CPU

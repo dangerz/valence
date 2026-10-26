@@ -5,11 +5,16 @@
     <EnableDynamicLoading>true</EnableDynamicLoading>
     <Nullable>enable</Nullable>
     <RootNamespace>Valence.Viewer</RootNamespace>
+    <!-- The C# probe is also a standalone executable; we only use it as a library here. -->
+    <ValidateExecutableReferencesMatchSelfContained>false</ValidateExecutableReferencesMatchSelfContained>
   </PropertyGroup>
 
   <ItemGroup>
     <!-- Shared graph format (same classes the CLI and probes serialize). -->
     <ProjectReference Include="../src/Valence.Schema/Valence.Schema.csproj" />
+    <!-- Analysis runs in-process: "Open source folder…" needs no separately built CLI. -->
+    <ProjectReference Include="../src/Valence.Core/Valence.Core.csproj" />
+    <ProjectReference Include="../probes/csharp/Valence.Probe.CSharp.csproj" />
   </ItemGroup>
 
 </Project>
