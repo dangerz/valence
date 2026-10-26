@@ -1,0 +1,15 @@
+<Project Sdk="Godot.NET.Sdk/4.7.2">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Valence.Viewer</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Shared graph format (same classes the CLI and probes serialize). -->
+    <ProjectReference Include="../src/Valence.Schema/Valence.Schema.csproj" />
+  </ItemGroup>
+
+</Project>

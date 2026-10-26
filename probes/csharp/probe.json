@@ -1,0 +1,9 @@
+{
+  "schema": "valence.probe-manifest/1",
+  "name": "csharp",
+  "displayName": "C# (Roslyn)",
+  "version": "0.1.0",
+  "languages": ["csharp"],
+  "extensions": [".cs"],
+  "command": ["dotnet", "{dir}/Valence.Probe.CSharp.dll"]
+}

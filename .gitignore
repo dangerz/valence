@@ -23,3 +23,18 @@ mono_crash.*.json
 *.exe
 # Uncomment if your project does not version PCK files as runtime dependencies.
 # *.pck
+
+# .NET build outputs (tools + probes)
+bin/
+obj/
+dist/
+*.user
+.vs/
+.idea/
+
+# Generated graphs (keep samples under valence/samples)
+*.valence.json
+!valence/samples/*.valence.json
+
+# Personal Claude Code settings
+.claude/settings.local.json
