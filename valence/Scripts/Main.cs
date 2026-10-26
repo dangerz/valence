@@ -60,6 +60,7 @@ public partial class Main : Node3D
     // Hide / quiet: per-item states (key "molecule:/atom:/node:" + id) and the quiet fade level.
     private Dictionary<string, Visibility> _visibility = new(StringComparer.Ordinal);
     private float _quietFade = 0.15f;
+    private UntouchedMode _untouched = UntouchedMode.Show;
     private Dictionary<string, Vector2> _pins = new();
     private ColorMode _colorMode = ColorMode.Visibility;
     private int _linkDepth = 1;
@@ -102,7 +103,8 @@ public partial class Main : Node3D
         _camera.MakeCurrent();
 
         _hud = new Hud();
-        _hud.Build(_settings.ShowOutline, _settings.ShowMethods, _settings.ShowInspector, _settings.ShowLegend);
+        _hud.Build(_settings.ShowOutline, _settings.ShowMethods, _settings.ShowInspector, _settings.ShowLegend,
+                   _settings.OutlineWidth, _settings.RightWidth);
         var canvas = new CanvasLayer();
         AddChild(canvas);
         canvas.AddChild(_hud);
@@ -110,6 +112,8 @@ public partial class Main : Node3D
         _hud.SetRecent(_settings.RecentFolders);
         _quietFade = Mathf.Clamp(_settings.QuietFade, 0.02f, 0.9f);
         _hud.SetQuietFade(_quietFade);
+        _untouched = _settings.Untouched;
+        _hud.SetUntouchedMode(_untouched);
 
         var startup = StartupGraph();
         GD.Print($"[valence] viewer ready; loading {startup}");
@@ -204,6 +208,13 @@ public partial class Main : Node3D
             if (_simulation != null) _simulation.Speed = speed;
         };
         _hud.IncludeDataChanged += on => _includeData = on;
+        _hud.UntouchedModeChanged += SetUntouchedMode;
+        _hud.PanelWidthsChanged += (outline, right) =>
+        {
+            _settings.OutlineWidth = outline;
+            _settings.RightWidth = right;
+            _settings.Save();
+        };
     }
 
     // ---------------------------------------------------------------- loading
@@ -548,12 +559,11 @@ public partial class Main : Node3D
         _simTick = 1;
         _simFinished = false;
         _simulation.Play(graph, plan, keepTrace: false);
+        ApplyVisibility(); // ghosts/hides untouched classes per Simulate ▸ Untouched; also labels + colors
         _hud.SetSimulationState(true, true);
         _hud.ShowInfo(InfoText.ForSimulation(plan, _simTick, loop, _visits, _model));
         _hud.SetStatus($"{plan.Title}: {plan.Events.Count} pulses, {plan.Reached} points reached" +
-                       (plan.Truncated ? " (truncated)" : "") + " · Space pauses · Esc stops");
-        ApplyLabels();
-        ApplyColors();
+                       (plan.Truncated ? " (truncated)" : "") + " · Space pauses · H untouched · Esc stops");
     }
 
     private void OnNodeReached(NodeData node, float amount)
@@ -563,13 +573,28 @@ public partial class Main : Node3D
         RevealLabel(node);
     }
 
-    /// <summary>The flow reached a class: label it, and name its system.</summary>
+    /// <summary>The flow reached a class: un-ghost/un-hide it, label it, and name its system.</summary>
     private void RevealLabel(NodeData node)
     {
-        if (node.IsHidden) return;
+        if (node.UserOpacity <= 0f) return; // the user hid it
+        var atom = node.Atom;
+        var newAtom = _revealedAtoms.Add(atom);
+        if (node.Opacity < node.UserOpacity || (newAtom && atom.Opacity < atom.UserOpacity))
+        {
+            node.Opacity = node.UserOpacity;
+            atom.Opacity = atom.UserOpacity;
+            atom.View?.SetOpacity(atom.Opacity);
+            _nucleons?.UpdateAtom(atom);
+            if (newAtom)
+            {
+                _bonds?.UpdateAtom(atom);
+                _bonds?.SetFocus(_focusAtom);
+                _focusView?.RefreshVisibility();
+            }
+        }
         _labels?.Reveal(node);
-        if (!_revealedAtoms.Add(node.Atom)) return;
-        node.Atom.View?.SetLabelPinned(true, true);
+        if (!newAtom) return;
+        atom.View?.SetLabelPinned(true, true);
         _focusView?.SetPinnedAtoms(_revealedAtoms, true);
     }
 
@@ -639,8 +664,7 @@ public partial class Main : Node3D
         _simLoop = false;
         _simFinished = false;
         _hud.SetSimulationState(false, false);
-        ApplyLabels();
-        ApplyColors();
+        ApplyVisibility(); // brings back anything "untouched" was hiding; also labels + colors
     }
 
     private void ShowSummary()
@@ -683,6 +707,23 @@ public partial class Main : Node3D
     /// Effective visibility is the most restrictive of the item and its parents (project → system →
     /// class). Hidden draws nothing (nor its bonds, links, ports, labels or pulses); quiet draws faded.
     /// </summary>
+    /// <summary>During a simulation, what happens to classes/systems the flow hasn't reached yet.</summary>
+    private float UntouchedFactor(bool touched)
+    {
+        if (touched || _untouched == UntouchedMode.Show || _simulation is not { Active: true }) return 1f;
+        return _untouched == UntouchedMode.Hide ? 0f : _quietFade;
+    }
+
+    private void SetUntouchedMode(UntouchedMode mode)
+    {
+        _untouched = mode;
+        _hud.SetUntouchedMode(mode);
+        _settings.Untouched = mode;
+        _settings.Save();
+        ApplyVisibility();
+        if (_simulation is { Active: true }) _hud.SetStatus($"Untouched classes: {mode.ToString().ToLowerInvariant()}");
+    }
+
     private void ApplyVisibility()
     {
         if (_model == null) return;
@@ -707,15 +748,20 @@ public partial class Main : Node3D
             foreach (var atom in molecule.Atoms)
             {
                 var atomState = Most(moleculeState, StateOf("atom:" + atom.Id));
-                atom.Opacity = OpacityOf(atomState);
+                atom.UserOpacity = OpacityOf(atomState);
+                atom.Opacity = atom.UserOpacity * UntouchedFactor(_revealedAtoms.Contains(atom));
                 atom.View?.SetOpacity(atom.Opacity);
-                foreach (var node in atom.Nodes) node.Opacity = OpacityOf(Most(atomState, StateOf("node:" + node.Info.Id)));
+                foreach (var node in atom.Nodes)
+                {
+                    node.UserOpacity = OpacityOf(Most(atomState, StateOf("node:" + node.Info.Id)));
+                    node.Opacity = node.UserOpacity * UntouchedFactor(_heat.ContainsKey(node));
+                }
             }
         }
 
-        // Hidden selections go away.
-        if (_selectedNode is { IsHidden: true }) _selectedNode = null;
-        if (_focusAtom is { IsHidden: true }) ClearSelection();
+        // Selections the user hid go away (not ones that are only untouched by a simulation).
+        if (_selectedNode is { UserOpacity: <= 0f }) _selectedNode = null;
+        if (_focusAtom is { UserOpacity: <= 0f }) ClearSelection();
 
         _nucleons?.UpdateAll();
         _bonds?.UpdateAll();
@@ -1218,6 +1264,14 @@ public partial class Main : Node3D
                 break;
             case Key.Space:
                 TogglePause();
+                break;
+            case Key.H when !command:
+                SetUntouchedMode(_untouched switch
+                {
+                    UntouchedMode.Show => UntouchedMode.Ghost,
+                    UntouchedMode.Ghost => UntouchedMode.Hide,
+                    _ => UntouchedMode.Show,
+                });
                 break;
             case Key.Escape:
                 Back();

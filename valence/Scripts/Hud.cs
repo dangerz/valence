@@ -78,6 +78,11 @@ public partial class Hud : Control
     public OutlinePanel Outline { get; } = new();
     public MethodsPanel Methods { get; } = new();
     private VBoxContainer? _rightColumn;
+    private PanelResizer? _outlineResizer;
+    private PanelResizer? _rightResizer;
+    private PopupMenu? _untouchedMenu;
+    private const float MinPanelWidth = 180f;
+    private const float MaxPanelWidth = 900f;
     public ProgressOverlay Progress { get; } = new();
 
     public event Action<string>? SourceFolderChosen;
@@ -101,6 +106,10 @@ public partial class Hud : Control
     public event Action<bool>? IncludeDataChanged;
     public event Action<float>? QuietFadeChanged;
     public event Action? ShowAllRequested;
+    public event Action<UntouchedMode>? UntouchedModeChanged;
+
+    /// <summary>Outline width, right column width (after a border drag).</summary>
+    public event Action<float, float>? PanelWidthsChanged;
 
     /// <summary>A "node:" / "atom:" link was clicked in the inspector or picked in the outline.</summary>
     public event Action<string>? LinkClicked;
@@ -112,7 +121,7 @@ public partial class Hud : Control
     public event Action? PointerEnteredUi;
 
     /// <summary>Builds the UI. Call once, before adding to the tree.</summary>
-    public void Build(bool showOutline, bool showMethods, bool showInspector, bool showLegend)
+    public void Build(bool showOutline, bool showMethods, bool showInspector, bool showLegend, float outlineWidth, float rightWidth)
     {
         SetAnchorsPreset(LayoutPreset.FullRect);
         MouseFilter = MouseFilterEnum.Ignore;
@@ -128,25 +137,43 @@ public partial class Hud : Control
         middle.AddThemeConstantOverride("separation", 0);
         root.AddChild(middle);
 
-        Outline.AddThemeStyleboxOverride("panel", PanelStyle(0.92f, 0, borderRight: 2));
-        Outline.CustomMinimumSize = new Vector2(300f, 0f);
+        Outline.AddThemeStyleboxOverride("panel", PanelStyle(0.92f, 0));
+        Outline.CustomMinimumSize = new Vector2(Mathf.Clamp(outlineWidth, MinPanelWidth, MaxPanelWidth), 0f);
         Outline.Build();
         Outline.ItemChosen += meta => LinkClicked?.Invoke(meta);
         Outline.MouseEntered += () => PointerEnteredUi?.Invoke();
         Outline.Visible = showOutline;
         middle.AddChild(Outline);
 
+        // The Outline's right border: drag to resize.
+        _outlineResizer = new PanelResizer();
+        _outlineResizer.Dragged += dx => ResizePanel(Outline, dx);
+        _outlineResizer.DragFinished += RaiseWidthsChanged;
+        _outlineResizer.MouseEntered += () => PointerEnteredUi?.Invoke();
+        middle.AddChild(_outlineResizer);
+
         // The 3D view shows through this area; it passes all input to the scene.
         var viewport = new Control { MouseFilter = MouseFilterEnum.Ignore, SizeFlagsHorizontal = SizeFlags.ExpandFill };
         middle.AddChild(viewport);
         BuildLegend(viewport, showLegend);
 
+        // The right column's left border: drag to resize (dragging left widens it).
+        _rightResizer = new PanelResizer();
+        _rightResizer.Dragged += dx => ResizePanel(_rightColumn, -dx);
+        _rightResizer.DragFinished += RaiseWidthsChanged;
+        _rightResizer.MouseEntered += () => PointerEnteredUi?.Invoke();
+        middle.AddChild(_rightResizer);
+
         // Right column: Methods (with ▶ simulate buttons) above the Inspector.
-        _rightColumn = new VBoxContainer { CustomMinimumSize = new Vector2(400f, 0f), MouseFilter = MouseFilterEnum.Ignore };
+        _rightColumn = new VBoxContainer
+        {
+            CustomMinimumSize = new Vector2(Mathf.Clamp(rightWidth, MinPanelWidth, MaxPanelWidth), 0f),
+            MouseFilter = MouseFilterEnum.Ignore,
+        };
         _rightColumn.AddThemeConstantOverride("separation", 0);
         middle.AddChild(_rightColumn);
 
-        Methods.AddThemeStyleboxOverride("panel", PanelStyle(0.92f, 0, borderLeft: 2, borderBottom: 2));
+        Methods.AddThemeStyleboxOverride("panel", PanelStyle(0.92f, 0, borderBottom: 2));
         Methods.SizeFlagsVertical = SizeFlags.ExpandFill;
         Methods.SizeFlagsStretchRatio = 0.8f;
         Methods.Build();
@@ -244,6 +271,15 @@ public partial class Hud : Control
         if (_simulateMenu == null) return;
         var index = _simulateMenu.GetItemIndex(SimPause);
         if (index >= 0) _simulateMenu.SetItemText(index, active && !playing ? "Resume" : "Pause");
+    }
+
+    public void SetUntouchedMode(UntouchedMode mode)
+    {
+        if (_untouchedMenu == null) return;
+        foreach (var each in new[] { UntouchedMode.Show, UntouchedMode.Ghost, UntouchedMode.Hide })
+        {
+            SetChecked(_untouchedMenu, (int)each, each == mode);
+        }
     }
 
     public void SetQuietFade(float fade)
@@ -440,6 +476,12 @@ public partial class Hud : Control
         };
         _simulateMenu.AddSubmenuNodeItem("Speed", _speedMenu);
         _simulateMenu.AddCheckItem("Include Data Reads/Writes", SimData);
+        _untouchedMenu = new PopupMenu { Name = "Untouched" };
+        _untouchedMenu.AddRadioCheckItem("Show (draw everything)", (int)UntouchedMode.Show);
+        _untouchedMenu.AddRadioCheckItem("Ghost (fade what the flow hasn't reached)", (int)UntouchedMode.Ghost);
+        _untouchedMenu.AddRadioCheckItem("Hide (only draw what the flow has reached)", (int)UntouchedMode.Hide);
+        _untouchedMenu.IdPressed += id => UntouchedModeChanged?.Invoke((UntouchedMode)(int)id);
+        _simulateMenu.AddSubmenuNodeItem("Untouched (H)", _untouchedMenu);
         _simulateMenu.IdPressed += id => OnMenu((int)id);
         menus.AddChild(_simulateMenu);
 
@@ -459,7 +501,7 @@ public partial class Hud : Control
     private void BuildInspector(bool visible)
     {
         _inspector = new PanelContainer { SizeFlagsVertical = SizeFlags.ExpandFill, Visible = visible };
-        _inspector.AddThemeStyleboxOverride("panel", PanelStyle(0.92f, 0, borderLeft: 2));
+        _inspector.AddThemeStyleboxOverride("panel", PanelStyle(0.92f, 0));
         _inspector.MouseEntered += () => PointerEnteredUi?.Invoke();
 
         var column = new VBoxContainer();
@@ -604,7 +646,9 @@ public partial class Hud : Control
                 "D / U — flow downstream from / upstream into the selected class\n" +
                 "G — play the game loop (every _Process/_PhysicsProcess, repeating)\n" +
                 "Simulate ▸ Play Trigger — startup, input, event handlers, requests…\n" +
-                "Space — pause/resume (or replay) · Esc — stop",
+                "Space — pause/resume (or replay) · Esc — stop\n" +
+                "H — untouched classes: show / ghost / hide (only what the flow reaches is drawn)\n\n" +
+                "Drag a side panel's border to resize it.",
         };
         AddChild(_helpDialog);
 
@@ -722,11 +766,23 @@ public partial class Hud : Control
         PanelsChanged?.Invoke(Outline.Visible, Methods.Visible, _inspector?.Visible ?? false, _legend?.Visible ?? false);
     }
 
-    /// <summary>The right column takes no space when both of its panels are hidden.</summary>
+    /// <summary>The right column takes no space when both of its panels are hidden; borders follow their panels.</summary>
     private void UpdateRightColumn()
     {
         if (_rightColumn != null) _rightColumn.Visible = Methods.Visible || (_inspector?.Visible ?? false);
+        if (_rightResizer != null) _rightResizer.Visible = _rightColumn?.Visible ?? false;
+        if (_outlineResizer != null) _outlineResizer.Visible = Outline.Visible;
     }
+
+    private static void ResizePanel(Control? panel, float delta)
+    {
+        if (panel == null) return;
+        var width = Mathf.Clamp(panel.CustomMinimumSize.X + delta, MinPanelWidth, MaxPanelWidth);
+        panel.CustomMinimumSize = new Vector2(width, panel.CustomMinimumSize.Y);
+    }
+
+    private void RaiseWidthsChanged() =>
+        PanelWidthsChanged?.Invoke(Outline.CustomMinimumSize.X, _rightColumn?.CustomMinimumSize.X ?? 400f);
 
     // ---------------------------------------------------------------- helpers
 

@@ -115,8 +115,10 @@ public partial class SimulationView : Node3D
             var pulse = events[i];
             var from = _graph.OwnerOf(pulse.From);
             var to = _graph.OwnerOf(pulse.To);
-            if (from == null || to == null || from.IsHidden || to.IsHidden) continue;
-            var opacity = Mathf.Min(from.Opacity, to.Opacity);
+            // A pulse may head for a class "hide untouched" is still hiding (it appears on arrival),
+            // but never for one the user hid.
+            if (from == null || to == null || from.IsHidden || to.UserOpacity <= 0f) continue;
+            var opacity = Mathf.Min(from.Opacity, to.UserOpacity);
             var s = Mathf.Clamp((_time - pulse.Start) / (pulse.Arrive - pulse.Start), 0f, 1f);
             var position = PulsePosition(from.WorldPosition, to.WorldPosition, s, from == to);
             var size = (pulse.Likely ? 0.08f : 0.12f) * (opacity < 1f ? 0.6f : 1f);

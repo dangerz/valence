@@ -35,8 +35,11 @@ public sealed class NodeData
     public List<EdgeInfo> Outgoing { get; } = new();
     public List<EdgeInfo> Incoming { get; } = new();
 
-    /// <summary>1 shown, the quiet fade (e.g. 0.15) when quiet, 0 when hidden (itself or a parent).</summary>
+    /// <summary>What's drawn: <see cref="UserOpacity"/>, or 0 while "hide untouched" hides it in a simulation.</summary>
     public float Opacity { get; set; } = 1f;
+
+    /// <summary>From the user's hide/quiet choices: 1 shown, the quiet fade when quiet, 0 when hidden.</summary>
+    public float UserOpacity { get; set; } = 1f;
     public bool IsHidden => Opacity <= 0f;
 
     public Vector3 WorldPosition => Atom.Position + LocalOffset;
@@ -75,8 +78,11 @@ public sealed class AtomData
     public bool Pinned { get; set; }
     public AtomView? View { get; set; }
 
-    /// <summary>1 shown, the quiet fade when quiet, 0 when hidden (itself or its project).</summary>
+    /// <summary>What's drawn: <see cref="UserOpacity"/>, or 0 while "hide untouched" hides it in a simulation.</summary>
     public float Opacity { get; set; } = 1f;
+
+    /// <summary>From the user's hide/quiet choices (itself or its project).</summary>
+    public float UserOpacity { get; set; } = 1f;
     public bool IsHidden => Opacity <= 0f;
 
     /// <summary>How many other systems this one bonds with.</summary>

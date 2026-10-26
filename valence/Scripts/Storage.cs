@@ -94,6 +94,14 @@ public enum Visibility
     Hidden = 2,
 }
 
+/// <summary>During a simulation: what to do with classes and systems the flow hasn't reached.</summary>
+public enum UntouchedMode
+{
+    Show = 0,
+    Ghost = 1,
+    Hide = 2,
+}
+
 /// <summary>
 /// Hidden/quiet items per repo, in user://visibility. Keys are "molecule:&lt;id&gt;", "atom:&lt;id&gt;"
 /// or "node:&lt;id&gt;"; anything not listed is shown.
@@ -157,8 +165,14 @@ public sealed class ViewerSettings
     public bool ShowInspector { get; set; } = true;
     public bool ShowLegend { get; set; } = true;
 
-    /// <summary>How visible "quiet" items are, 0..1.</summary>
+    /// <summary>How visible "quiet" items are, 0..1. Also used for ghosted untouched items.</summary>
     public float QuietFade { get; set; } = 0.15f;
+
+    public UntouchedMode Untouched { get; set; } = UntouchedMode.Show;
+
+    /// <summary>Side panel widths in pixels (dragged at their borders).</summary>
+    public float OutlineWidth { get; set; } = 300f;
+    public float RightWidth { get; set; } = 400f;
 
     private static string SettingsPath => ProjectSettings.GlobalizePath("user://viewer.json");
 

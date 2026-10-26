@@ -47,6 +47,11 @@ them in source order, event and signal wiring, and entry points (Godot `_Process
 * **D / U**: flow *downstream* from the selected class (what it reaches) or *upstream* into it
   (what reaches it). Pulses travel the links hop by hop, in the order the calls are written.
 * While a simulation runs, all labels hide; a class is labeled the moment the flow reaches it.
+* **Simulate ▸ Untouched** (or **H** to cycle): *Show* everything, *Ghost* what the flow hasn't
+  reached (uses the Quiet Fade level), or *Hide* it so only the flow's path is drawn, appearing as
+  pulses arrive.
+
+Side panels can be resized by dragging their borders; widths are remembered.
 * **G**: play the **game loop**: every `_Process` / `_PhysicsProcess` / `_Draw`, tick after tick.
 * **Simulate ▸ Play Trigger**: startup, input, event handlers, web requests…
 * Space pauses/resumes, Simulate ▸ Speed changes pace, Esc stops. Classes heat up as the flow
