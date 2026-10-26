@@ -106,10 +106,19 @@ int Analyze()
     outPath ??= RepoAnalyzer.DefaultOutputPath(root);
 
     var stopwatch = Stopwatch.StartNew();
+    string? lastPhase = null;
+    var context = new AnalysisContext(Log, progress =>
+    {
+        // Print each phase once; the viewer shows the fine-grained bar.
+        if (progress.Phase == lastPhase) return;
+        lastPhase = progress.Phase;
+        Log($"[{progress.Fraction:P0}] {progress.Phase}");
+    });
+
     Graph graph;
     try
     {
-        graph = RepoAnalyzer.Analyze(root, probes, options, Log);
+        graph = RepoAnalyzer.Analyze(root, probes, options, context);
     }
     catch (Exception e) when (e is InvalidOperationException or DirectoryNotFoundException)
     {

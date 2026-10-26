@@ -20,6 +20,14 @@ public sealed class NodeData
 
     /// <summary>Instance index in the nucleon MultiMesh.</summary>
     public int Index { get; set; }
+
+    /// <summary>Where the nucleon sits in the packed nucleus.</summary>
+    public Vector3 PackedOffset { get; set; }
+
+    /// <summary>Where it sits when the atom is opened (readable, layered by internal dependencies).</summary>
+    public Vector3 ExpandedOffset { get; set; }
+
+    /// <summary>Current offset from the atom centre (animates between packed and expanded).</summary>
     public Vector3 LocalOffset { get; set; }
     public float Radius { get; set; }
     public int FanIn { get; set; }
@@ -51,6 +59,9 @@ public sealed class AtomData
     public Vector3 Position { get; set; }
     public float CoreRadius { get; set; }
     public float Radius { get; set; }
+
+    /// <summary>Radius currently drawn: <see cref="Radius"/>, or larger while the atom is opened.</summary>
+    public float DisplayRadius { get; set; }
 
     /// <summary>Dependency depth: 0 = depends on no other system. Higher layers sit higher in the scene.</summary>
     public int Layer { get; set; }
@@ -126,6 +137,13 @@ public sealed class GraphModel
     public List<AtomData> AtomList { get; } = new();
     public List<MoleculeData> Molecules { get; } = new();
     public List<BondData> Bonds { get; } = new();
+
+    /// <summary>Member id → the node (class) declaring it.</summary>
+    public Dictionary<string, NodeData> MemberOwners { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>Member id → entry points that start at it.</summary>
+    public Dictionary<string, List<EntryPointInfo>> EntryPointsByMember { get; } = new(StringComparer.Ordinal);
+
     public int MaxLayer { get; private set; }
     public double MaxChurn { get; private set; }
     public int MaxFanIn { get; private set; }
@@ -181,6 +199,17 @@ public sealed class GraphModel
             var node = new NodeData(info, atom);
             atom.Nodes.Add(node);
             model.Nodes[info.Id] = node;
+            foreach (var member in info.Members) model.MemberOwners.TryAdd(member.Id, node);
+        }
+
+        foreach (var entry in graph.EntryPoints)
+        {
+            if (!model.EntryPointsByMember.TryGetValue(entry.Member, out var list))
+            {
+                list = new List<EntryPointInfo>();
+                model.EntryPointsByMember[entry.Member] = list;
+            }
+            list.Add(entry);
         }
 
         model.Molecules.AddRange(molecules.Values.OrderBy(m => m.Id, StringComparer.Ordinal));
@@ -192,6 +221,21 @@ public sealed class GraphModel
         model.MaxChurn = model.Nodes.Values.Select(n => n.Metric(MetricKeys.Churn)).DefaultIfEmpty(0).Max();
         model.MaxFanIn = model.Nodes.Values.Select(n => n.FanIn).DefaultIfEmpty(0).Max();
         return model;
+    }
+
+    /// <summary>Classes directly linked to this one (either direction), optionally filtered by edge kind.</summary>
+    public IEnumerable<NodeData> Neighbors(NodeData node, ISet<string>? kinds = null)
+    {
+        foreach (var edge in node.Outgoing)
+        {
+            if (kinds != null && !kinds.Contains(edge.Kind)) continue;
+            if (Nodes.TryGetValue(edge.Target, out var target)) yield return target;
+        }
+        foreach (var edge in node.Incoming)
+        {
+            if (kinds != null && !kinds.Contains(edge.Kind)) continue;
+            if (Nodes.TryGetValue(edge.Source, out var source)) yield return source;
+        }
     }
 
     private void ConnectEdges(IEnumerable<EdgeInfo> edges)
@@ -235,10 +279,6 @@ public sealed class GraphModel
         Bonds.AddRange(bonds.Values.OrderBy(b => b.A.Id, StringComparer.Ordinal).ThenBy(b => b.B.Id, StringComparer.Ordinal));
     }
 
-    /// <summary>
-    /// Layer = longest dependency chain below a system, after collapsing cycles (Tarjan SCC).
-    /// Systems in a cycle share a layer and are flagged.
-    /// </summary>
     private void ComputeLayers()
     {
         var dependsOn = AtomList.ToDictionary(a => a, _ => new List<AtomData>());
@@ -248,76 +288,12 @@ public sealed class GraphModel
             if (bond.WeightBA > 0) dependsOn[bond.B].Add(bond.A);
         }
 
-        var index = new Dictionary<AtomData, int>();
-        var low = new Dictionary<AtomData, int>();
-        var onStack = new HashSet<AtomData>();
-        var stack = new Stack<AtomData>();
-        var component = new Dictionary<AtomData, int>();
-        var componentSizes = new List<int>();
-        var next = 0;
-
-        void Connect(AtomData v)
-        {
-            index[v] = low[v] = next++;
-            stack.Push(v);
-            onStack.Add(v);
-            foreach (var w in dependsOn[v])
-            {
-                if (!index.ContainsKey(w))
-                {
-                    Connect(w);
-                    low[v] = Math.Min(low[v], low[w]);
-                }
-                else if (onStack.Contains(w))
-                {
-                    low[v] = Math.Min(low[v], index[w]);
-                }
-            }
-            if (low[v] != index[v]) return;
-
-            var id = componentSizes.Count;
-            var size = 0;
-            AtomData member;
-            do
-            {
-                member = stack.Pop();
-                onStack.Remove(member);
-                component[member] = id;
-                size++;
-            } while (member != v);
-            componentSizes.Add(size);
-        }
-
-        foreach (var atom in AtomList)
-        {
-            if (!index.ContainsKey(atom)) Connect(atom);
-        }
-
-        var componentDeps = new HashSet<int>[componentSizes.Count];
-        for (var c = 0; c < componentDeps.Length; c++) componentDeps[c] = new HashSet<int>();
-        foreach (var atom in AtomList)
-        {
-            foreach (var dep in dependsOn[atom])
-            {
-                if (component[dep] != component[atom]) componentDeps[component[atom]].Add(component[dep]);
-            }
-        }
-
-        var rank = Enumerable.Repeat(-1, componentSizes.Count).ToArray();
-        int Rank(int c)
-        {
-            if (rank[c] >= 0) return rank[c];
-            var r = 0;
-            foreach (var dep in componentDeps[c]) r = Math.Max(r, Rank(dep) + 1);
-            rank[c] = r;
-            return r;
-        }
-
+        var (layers, inCycle) = DependencyLayers.Compute(AtomList, atom => dependsOn[atom]);
         MaxLayer = 0;
         foreach (var atom in AtomList)
         {
-            atom.Layer = Rank(component[atom]);
-            atom.InCycle = componentSizes[component[atom]] > 1;
+            atom.Layer = layers[atom];
+            atom.InCycle = inCycle.Contains(atom);
             MaxLayer = Math.Max(MaxLayer, atom.Layer);
         }
     }

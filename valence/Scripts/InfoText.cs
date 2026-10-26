@@ -7,11 +7,50 @@ using Valence.Schema;
 
 namespace Valence.Viewer;
 
-/// <summary>BBCode for the info panel. Links use "node:&lt;id&gt;" and "atom:&lt;id&gt;" metas.</summary>
+/// <summary>BBCode for the inspector. Links use "node:&lt;id&gt;" and "atom:&lt;id&gt;" metas.</summary>
 public static class InfoText
 {
     private const int MaxLinksPerGroup = 40;
+    private const int MaxMembers = 80;
     private static readonly string Muted = Palette.Html(Palette.MutedText);
+    private static readonly string EntryColor = Palette.Html(Palette.Accent);
+
+    public static string ForSummary(GraphModel model)
+    {
+        var repo = model.Graph.Repo;
+        var sb = new StringBuilder();
+        sb.Append($"[font_size=20][b]{Esc(repo.Name)}[/b][/font_size]\n");
+        sb.Append($"[color={Muted}]{Esc(repo.Root)}[/color]\n");
+        if (!string.IsNullOrEmpty(repo.Commit))
+        {
+            sb.Append($"[color={Muted}]{Esc(repo.Branch ?? "")} @ {Esc(repo.Commit[..Math.Min(10, repo.Commit.Length)])}[/color]\n");
+        }
+        sb.Append('\n');
+        sb.Append($"{model.Molecules.Count} projects · {model.AtomList.Count} systems · {model.Nodes.Count} classes\n");
+        sb.Append($"{model.Bonds.Count} bonds, {model.Bonds.Count(b => b.Covalent)} of them cycles\n");
+        var members = model.Nodes.Values.Sum(n => n.Info.Members.Count);
+        if (members > 0) sb.Append($"{members} members · {model.Graph.MemberEdges.Count} member-level links\n");
+
+        var entries = model.Graph.EntryPoints;
+        if (entries.Count > 0)
+        {
+            sb.Append($"\n[b]Entry points[/b] ({entries.Count})\n");
+            foreach (var group in entries.GroupBy(e => e.Trigger).OrderBy(g => TriggerOrder(g.Key)))
+            {
+                sb.Append($"[color={EntryColor}]▶ {Esc(group.Key)}[/color] ");
+                var links = group.Take(MaxLinksPerGroup).Select(e =>
+                    model.MemberOwners.TryGetValue(e.Member, out var owner)
+                        ? $"[url=node:{owner.Info.Id}]{Esc(e.Label)}[/url]"
+                        : Esc(e.Label));
+                sb.Append(string.Join(", ", links));
+                if (group.Count() > MaxLinksPerGroup) sb.Append($" [color={Muted}]+{group.Count() - MaxLinksPerGroup} more[/color]");
+                sb.Append('\n');
+            }
+        }
+
+        sb.Append($"\n[color={Muted}]Click a system to open it, or pick anything from the Outline.[/color]\n");
+        return sb.ToString();
+    }
 
     public static string ForNode(NodeData node, GraphModel model)
     {
@@ -45,6 +84,7 @@ public static class InfoText
             sb.Append('\n');
         }
 
+        AppendMembers(sb, node, model);
         AppendEdges(sb, "Depends on", node.Outgoing, e => e.Target, model);
         AppendEdges(sb, "Used by", node.Incoming, e => e.Source, model);
         return sb.ToString();
@@ -69,6 +109,9 @@ public static class InfoText
         AppendBonds(sb, "Used by systems", bonds.Where(b => b.WeightFrom(b.Other(atom)) > 0)
             .OrderByDescending(b => b.WeightFrom(b.Other(atom))).Select(b => (b, b.WeightFrom(b.Other(atom)))), atom);
 
+        var entryCount = atom.Nodes.SelectMany(n => n.Info.Members).Count(m => model.EntryPointsByMember.ContainsKey(m.Id));
+        if (entryCount > 0) sb.Append($"\n[color={EntryColor}]▶ {entryCount} entry points in this system[/color]\n");
+
         sb.Append("\n[b]Classes[/b] (most depended-on first)\n");
         foreach (var node in atom.Nodes.OrderByDescending(n => n.FanIn).ThenBy(n => n.Info.Name).Take(80))
         {
@@ -76,6 +119,28 @@ public static class InfoText
         }
         if (atom.Nodes.Count > 80) sb.Append($"[color={Muted}]+{atom.Nodes.Count - 80} more[/color]\n");
         return sb.ToString();
+    }
+
+    private static void AppendMembers(StringBuilder sb, NodeData node, GraphModel model)
+    {
+        var members = node.Info.Members;
+        if (members.Count == 0) return;
+        sb.Append($"\n[b]Members[/b] ({members.Count})\n");
+        foreach (var member in members
+                     .OrderBy(m => model.EntryPointsByMember.ContainsKey(m.Id) ? 0 : 1)
+                     .ThenBy(m => KindOrder(m.Kind))
+                     .ThenBy(m => m.Line)
+                     .Take(MaxMembers))
+        {
+            sb.Append($"[color={Muted}]{KindGlyph(member.Kind)}[/color] {Esc(member.Signature ?? member.Name)}");
+            if (member.IsStatic) sb.Append($" [color={Muted}]static[/color]");
+            if (model.EntryPointsByMember.TryGetValue(member.Id, out var entries))
+            {
+                foreach (var entry in entries) sb.Append($" [color={EntryColor}]▶ {Esc(entry.Trigger)}[/color]");
+            }
+            sb.Append('\n');
+        }
+        if (members.Count > MaxMembers) sb.Append($"[color={Muted}]+{members.Count - MaxMembers} more[/color]\n");
     }
 
     private static void AppendBonds(StringBuilder sb, string title, IEnumerable<(BondData Bond, int Weight)> bonds, AtomData atom)
@@ -98,18 +163,52 @@ public static class InfoText
         foreach (var kind in Palette.EdgeKindOrder)
         {
             var group = visible.Where(e => e.Kind == kind)
-                .Select(e => (Node: model.Nodes.GetValueOrDefault(other(e)), e.Weight))
+                .Select(e => (Node: model.Nodes.GetValueOrDefault(other(e)), e.Weight, e.Confidence))
                 .Where(x => x.Node != null)
                 .OrderByDescending(x => x.Weight)
                 .ToList();
             if (group.Count == 0) continue;
             var links = group.Take(MaxLinksPerGroup)
-                .Select(x => NodeLink(x.Node!) + (x.Weight > 1 ? $" [color={Muted}]×{x.Weight}[/color]" : ""));
+                .Select(x => NodeLink(x.Node!)
+                             + (x.Weight > 1 ? $" [color={Muted}]×{x.Weight}[/color]" : "")
+                             + (x.Confidence != null ? $" [color={Muted}]({Esc(x.Confidence)})[/color]" : ""));
             sb.Append($"[color={Palette.Html(Palette.EdgeKind(kind))}]{kind}[/color]: {string.Join(", ", links)}");
             if (group.Count > MaxLinksPerGroup) sb.Append($" [color={Muted}]+{group.Count - MaxLinksPerGroup} more[/color]");
             sb.Append('\n');
         }
     }
+
+    private static int TriggerOrder(string trigger) => trigger switch
+    {
+        Triggers.Startup => 0,
+        Triggers.Frame => 1,
+        Triggers.Physics => 2,
+        Triggers.Input => 3,
+        Triggers.Draw => 4,
+        Triggers.Event => 5,
+        Triggers.Request => 6,
+        Triggers.Job => 7,
+        _ => 8,
+    };
+
+    private static int KindOrder(string kind) => kind switch
+    {
+        MemberKinds.Constructor => 0,
+        MemberKinds.Method or MemberKinds.Function => 1,
+        MemberKinds.Event => 2,
+        MemberKinds.Property => 3,
+        _ => 4,
+    };
+
+    private static string KindGlyph(string kind) => kind switch
+    {
+        MemberKinds.Constructor => "new",
+        MemberKinds.Method or MemberKinds.Function => "ƒ",
+        MemberKinds.Event => "⚡",
+        MemberKinds.Property => "◆",
+        MemberKinds.Field => "▪",
+        _ => "·",
+    };
 
     private static string NodeLink(NodeData node) => $"[url=node:{node.Info.Id}]{Esc(node.Info.Name)}[/url]";
 

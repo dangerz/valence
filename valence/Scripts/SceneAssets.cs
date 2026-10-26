@@ -10,6 +10,9 @@ public sealed class SceneAssets
     public SphereMesh Cloud { get; } = new() { Radius = 1f, Height = 2f, RadialSegments = 32, Rings = 16 };
     public SphereMesh Electron { get; } = new() { Radius = 0.07f, Height = 0.14f, RadialSegments = 8, Rings = 4 };
 
+    /// <summary>Unit sphere for the ports around an opened atom (scaled per port).</summary>
+    public SphereMesh Port { get; } = new() { Radius = 1f, Height = 2f, RadialSegments = 16, Rings = 8 };
+
     /// <summary>Unit-radius ring in the XZ plane; scaled per orbit.</summary>
     public TorusMesh Orbit { get; } = new() { InnerRadius = 0.99f, OuterRadius = 1.01f, Rings = 64, RingSegments = 6 };
 
@@ -46,6 +49,24 @@ public sealed class SceneAssets
         NucleonMaterial = new ShaderMaterial { Shader = GD.Load<Shader>("res://Shaders/nucleon.gdshader") };
         CloudMaterial = new ShaderMaterial { Shader = GD.Load<Shader>("res://Shaders/atom_cloud.gdshader") };
         BondMaterial = new ShaderMaterial { Shader = GD.Load<Shader>("res://Shaders/bond_flow.gdshader") };
+    }
+
+    private readonly Dictionary<Color, StandardMaterial3D> _portMaterials = new();
+
+    public StandardMaterial3D PortMaterial(Color color)
+    {
+        if (!_portMaterials.TryGetValue(color, out var material))
+        {
+            material = new StandardMaterial3D
+            {
+                AlbedoColor = color,
+                EmissionEnabled = true,
+                Emission = color,
+                EmissionEnergyMultiplier = 1.5f,
+            };
+            _portMaterials[color] = material;
+        }
+        return material;
     }
 
     public StandardMaterial3D OrbitMaterial(Color tint)

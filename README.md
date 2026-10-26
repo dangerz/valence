@@ -19,9 +19,17 @@ chemistry:
 | **Height** | dependency layer: a system always sits above what it depends on |
 | ✦ Glow | changed in the 14 days before the snapshot (git) |
 
-Click an atom to focus it and see its class-level links. Click a nucleon to inspect one class and
-everything it touches. Shift-drag atoms to arrange things your way. Moves are saved per repo,
-and height stays tied to the dependency layer so the picture keeps its meaning.
+Click an atom to **open** it: its classes spread out with labels, stacked so each class sits above
+the classes it uses, and **ports** on the rim ("→ Shop.Data ×12") lead to the systems it's bonded
+with. Hover a class to see its direct links; click it to select it and light up everything it
+touches (View ▸ Link Depth for 2–3 hops). Or skip the 3D hunting and pick anything from the
+**Outline** on the left. Shift-drag atoms to arrange things your way. Moves are saved per repo, and
+height stays tied to the dependency layer so the picture keeps its meaning.
+
+The analysis also records methods, properties, fields and events, the calls and reads/writes
+between them in source order, event and signal wiring, and entry points (Godot `_Process`,
+`_Ready`, `Main`, event handlers). That's the groundwork for simulating flow; see
+[docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Layout
 
@@ -80,9 +88,12 @@ The viewer also accepts `-- --graph <file>` on the Godot command line.
 | Drag / two-finger swipe | orbit |
 | Right-drag / Shift+swipe | pan |
 | Wheel / pinch | zoom |
-| Click atom | focus system (info panel + class links) |
-| Click nucleon (in focused atom) | inspect class |
+| Click atom | open the system (labeled classes, rim ports, inspector) |
+| Hover a class | tooltip + its direct links |
+| Click a class | select it; links light up to View ▸ Link Depth hops |
+| Click a port | jump to that system |
 | Shift-drag atom | move it (saved per repo) |
 | Double-click empty space, **F** | frame everything |
 | **Esc** | back out one level |
-| Search box + Enter | find class/system (Enter again = next match) |
+| **⌘F** / Outline filter | find a class or system by name |
+| **⌘O** / **⌘⇧O** / **⌘R** | open source folder / open graph / re-analyze |

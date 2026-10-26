@@ -13,6 +13,7 @@ public partial class AtomView : Node3D
     private const int MaxElectrons = 8;
 
     private readonly List<(Node3D Spinner, float Speed)> _spinners = new();
+    private readonly List<Node3D> _orbits = new();
     private MeshInstance3D? _cloud;
     private Label3D? _label;
     private Color _labelColor;
@@ -49,6 +50,7 @@ public partial class AtomView : Node3D
                 Rotation = new Vector3(Mathf.DegToRad(tilt), Mathf.DegToRad(60f * ring + 360f * seed), 0f),
             };
             AddChild(pivot);
+            _orbits.Add(pivot);
             pivot.AddChild(new MeshInstance3D
             {
                 Mesh = assets.Orbit,
@@ -101,6 +103,16 @@ public partial class AtomView : Node3D
         {
             _label.Modulate = focused ? Colors.White : dimmed ? _labelColor.Darkened(0.55f) : _labelColor;
         }
+    }
+
+    /// <summary>0 = packed nucleus with orbits; 1 = opened to <paramref name="openRadius"/>.</summary>
+    public void SetExpansion(float t, float openRadius)
+    {
+        if (Data == null) return;
+        var radius = Mathf.Lerp(Data.Radius, Mathf.Max(openRadius, Data.Radius), t);
+        if (_cloud != null) _cloud.Scale = Vector3.One * radius * 0.95f;
+        foreach (var orbit in _orbits) orbit.Visible = t < 0.05f;
+        if (_label != null) _label.Position = new Vector3(0f, radius + 0.35f, 0f);
     }
 
     public override void _Process(double delta)

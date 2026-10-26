@@ -28,6 +28,8 @@ internal static class GraphBuilder
         var modules = new Dictionary<string, ModuleInfo>(StringComparer.Ordinal);
         var nodes = new Dictionary<string, NodeInfo>(StringComparer.Ordinal);
         var edges = new Dictionary<(string, string, string), EdgeInfo>();
+        var memberEdges = new Dictionary<(string, string, string), MemberEdgeInfo>();
+        var entryPoints = new Dictionary<(string, string), EntryPointInfo>();
 
         foreach (var output in outputs)
         {
@@ -49,15 +51,37 @@ internal static class GraphBuilder
             foreach (var edge in output.Edges)
             {
                 var key = (edge.Source, edge.Target, edge.Kind);
-                if (edges.TryGetValue(key, out var existing)) existing.Weight += edge.Weight;
-                else edges[key] = edge;
+                if (edges.TryGetValue(key, out var existing))
+                {
+                    existing.Weight += edge.Weight;
+                    existing.Confidence = Confidence.Strongest(existing.Confidence, edge.Confidence);
+                }
+                else
+                {
+                    edges[key] = edge;
+                }
             }
+            foreach (var edge in output.MemberEdges)
+            {
+                var key = (edge.Source, edge.Target, edge.Kind);
+                if (memberEdges.TryGetValue(key, out var existing))
+                {
+                    existing.Weight += edge.Weight;
+                    existing.Confidence = Confidence.Strongest(existing.Confidence, edge.Confidence);
+                }
+                else
+                {
+                    memberEdges[key] = edge;
+                }
+            }
+            foreach (var entry in output.EntryPoints) entryPoints.TryAdd((entry.Member, entry.Trigger), entry);
         }
 
-        // Probes should only emit edges between their own nodes; drop anything dangling.
+        // Probes should only emit edges between their own nodes/members; drop anything dangling.
         var validEdges = edges.Values
             .Where(e => nodes.ContainsKey(e.Source) && nodes.ContainsKey(e.Target) && e.Source != e.Target)
             .ToList();
+        var memberIds = new HashSet<string>(nodes.Values.SelectMany(n => n.Members).Select(m => m.Id), StringComparer.Ordinal);
 
         AddFanMetrics(nodes, validEdges);
         if (git != null) AddGitMetrics(nodes.Values, git);
@@ -66,6 +90,14 @@ internal static class GraphBuilder
         graph.Nodes = nodes.Values.OrderBy(n => n.Id, StringComparer.Ordinal).ToList();
         graph.Edges = validEdges;
         graph.ModuleEdges = AggregateModuleEdges(nodes, validEdges);
+        graph.MemberEdges = memberEdges.Values
+            .Where(e => memberIds.Contains(e.Source) && memberIds.Contains(e.Target))
+            .ToList();
+        graph.EntryPoints = entryPoints.Values
+            .Where(e => memberIds.Contains(e.Member))
+            .OrderBy(e => e.Trigger, StringComparer.Ordinal)
+            .ThenBy(e => e.Label, StringComparer.Ordinal)
+            .ToList();
         return graph;
     }
 

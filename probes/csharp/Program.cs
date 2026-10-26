@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using Valence.Core;
 using Valence.Probe.CSharp;
 using Valence.Schema;
 
@@ -45,7 +46,8 @@ if (!Directory.Exists(root))
 var stopwatch = Stopwatch.StartNew();
 try
 {
-    var output = new CSharpAnalyzer(root, message => Console.Error.WriteLine($"[csharp] {message}")).Run();
+    var context = new AnalysisContext(message => Console.Error.WriteLine($"[csharp] {message}"));
+    var output = new CSharpAnalyzer(root, context).Run();
     if (outPath == null) Console.Out.Write(JsonSerializer.Serialize(output, ValenceJson.Options));
     else ValenceJson.Write(outPath, output);
     Console.Error.WriteLine(

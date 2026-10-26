@@ -45,17 +45,65 @@ public static class Layout
         var core = count <= 1 ? 0f : 0.30f * MathF.Cbrt(count) + 0.1f;
         for (var i = 0; i < count; i++)
         {
-            if (count == 1)
-            {
-                nodes[i].LocalOffset = Vector3.Zero;
-                continue;
-            }
-            var radius = core * MathF.Cbrt((i + 0.5f) / count);
-            nodes[i].LocalOffset = Fibonacci(i, count) * radius;
+            var offset = count == 1 ? Vector3.Zero : Fibonacci(i, count) * (core * MathF.Cbrt((i + 0.5f) / count));
+            nodes[i].PackedOffset = offset;
+            nodes[i].LocalOffset = offset;
         }
 
         atom.CoreRadius = core + maxRadius;
         atom.Radius = atom.CoreRadius + 1.1f;
+        atom.DisplayRadius = atom.Radius;
+    }
+
+    /// <summary>
+    /// Opened-atom layout: classes spread out so each can carry a label. Height is the dependency
+    /// layer inside the system (a class sits above the classes it uses); each layer is a set of
+    /// concentric rings. Sets <see cref="NodeData.ExpandedOffset"/> and returns the opened radius.
+    /// </summary>
+    public static float Expand(AtomData atom, GraphModel model)
+    {
+        const float LayerSpacing = 1.6f;
+        const float RingSpacing = 1.3f;
+        const float LabelSpacing = 1.15f;
+
+        var nodes = atom.Nodes;
+        if (nodes.Count == 0) return atom.Radius;
+
+        var inAtom = new HashSet<NodeData>(nodes);
+        IEnumerable<NodeData> DependsOn(NodeData node) => node.Outgoing
+            .Where(e => e.Kind != EdgeKinds.Contains)
+            .Select(e => model.Nodes.GetValueOrDefault(e.Target))
+            .Where(t => t != null && inAtom.Contains(t))
+            .Cast<NodeData>();
+
+        var (layers, _) = DependencyLayers.Compute(nodes, DependsOn);
+        var maxLayer = layers.Values.DefaultIfEmpty(0).Max();
+        var extent = 0f;
+
+        foreach (var group in nodes.GroupBy(n => layers[n]))
+        {
+            var members = group.OrderBy(n => n.Info.Name, StringComparer.OrdinalIgnoreCase).ToList();
+            var y = (group.Key - maxLayer / 2f) * LayerSpacing;
+            var phase = group.Key * 0.6f;
+            var index = 0;
+            for (var ring = 0; index < members.Count; ring++)
+            {
+                var radius = members.Count == 1 ? 0f : RingSpacing * (ring + 1);
+                var capacity = radius <= 0f ? 1 : Math.Max(1, (int)(Mathf.Tau * radius / LabelSpacing));
+                var count = Math.Min(capacity, members.Count - index);
+                for (var j = 0; j < count; j++)
+                {
+                    var angle = phase + Mathf.Tau * j / count;
+                    var node = members[index + j];
+                    node.ExpandedOffset = new Vector3(MathF.Cos(angle) * radius, y, MathF.Sin(angle) * radius);
+                    extent = Mathf.Max(extent, radius + node.Radius);
+                }
+                index += count;
+            }
+        }
+
+        var halfHeight = maxLayer * LayerSpacing / 2f + 0.6f;
+        return Mathf.Max(atom.Radius, Mathf.Max(extent, halfHeight) + 1.6f);
     }
 
     private static Vector3 Fibonacci(int i, int count)

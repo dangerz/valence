@@ -64,8 +64,8 @@ public partial class BondRenderer : Node3D
         bond.Mesh.Visible = true;
 
         var direction = delta / distance;
-        var start = from + direction * bond.A.Radius * 0.75f;
-        var end = to - direction * bond.B.Radius * 0.75f;
+        var start = from + direction * bond.A.DisplayRadius * 0.75f;
+        var end = to - direction * bond.B.DisplayRadius * 0.75f;
         if ((end - start).Dot(direction) <= 0.05f)
         {
             // Bubbles overlap; run centre to centre instead.

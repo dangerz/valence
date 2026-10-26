@@ -17,6 +17,5 @@ public sealed class CSharpProbe : IProbe
 
     public bool IsRelevant(string root) => RepoFiles.ContainsAny(root, Extensions);
 
-    public ProbeOutput Run(string root, Action<string> log) =>
-        new CSharpAnalyzer(root, message => log($"  [csharp] {message}")).Run();
+    public ProbeOutput Run(string root, AnalysisContext context) => new CSharpAnalyzer(root, context).Run();
 }

@@ -15,6 +15,8 @@ public sealed class AnalyzeOptions
 /// </summary>
 public static class RepoAnalyzer
 {
+    private const double ProbeShare = 0.92;
+
     /// <summary>~/.valence/graphs/&lt;folder&gt;.valence.json, which is never inside the analyzed repo.</summary>
     public static string DefaultOutputPath(string root) => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".valence", "graphs",
@@ -32,42 +34,60 @@ public static class RepoAnalyzer
         return probes;
     }
 
-    public static Graph Analyze(string root, IReadOnlyList<IProbe> probes, AnalyzeOptions options, Action<string> log)
+    /// <exception cref="OperationCanceledException">When the context is cancelled.</exception>
+    public static Graph Analyze(string root, IReadOnlyList<IProbe> probes, AnalyzeOptions options, AnalysisContext context)
     {
         root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
         if (!Directory.Exists(root)) throw new DirectoryNotFoundException($"Not a folder: {root}");
 
-        var outputs = new List<ProbeOutput>();
-        foreach (var probe in probes)
-        {
-            if (!probe.IsRelevant(root)) continue;
-            log($"running probe '{probe.Name}' ({probe.Description})");
-            try
-            {
-                if (probe.Run(root, log) is { } output) outputs.Add(output);
-            }
-            catch (Exception e)
-            {
-                log($"probe '{probe.Name}' failed: {e.Message}");
-            }
-        }
-
-        if (outputs.Count == 0)
+        context.Report("Detecting languages", 0, force: true);
+        var relevant = probes.Where(p => p.IsRelevant(root)).ToList();
+        context.Cancellation.ThrowIfCancellationRequested();
+        if (relevant.Count == 0)
         {
             throw new InvalidOperationException(probes.Count == 0
                 ? "No probes are available."
                 : $"No probe found source files it understands in {root}.");
         }
 
+        var outputs = new List<ProbeOutput>();
+        var share = ProbeShare / relevant.Count;
+        for (var i = 0; i < relevant.Count; i++)
+        {
+            var probe = relevant[i];
+            context.Log($"running probe '{probe.Name}' ({probe.Description})");
+            try
+            {
+                if (probe.Run(root, context.Slice(i * share, share)) is { } output) outputs.Add(output);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception e)
+            {
+                context.Log($"probe '{probe.Name}' failed: {e.Message}");
+            }
+            context.Cancellation.ThrowIfCancellationRequested();
+        }
+
+        if (outputs.Count == 0) throw new InvalidOperationException("Every probe failed; see the log.");
+
         GitHistory? git = null;
         if (options.UseGit)
         {
-            git = GitHistory.Open(root, log);
-            git?.LoadChurn(options.ChurnDays, log);
+            context.Report("Reading git history", ProbeShare, force: true);
+            git = GitHistory.Open(root, context.Log);
+            git?.LoadChurn(options.ChurnDays, context.Log);
         }
+        context.Cancellation.ThrowIfCancellationRequested();
 
+        context.Report("Building graph", 0.98, force: true);
         var graph = GraphBuilder.Build(root, outputs, git, git != null ? options.ChurnDays : null);
-        log($"{graph.Nodes.Count} classes, {graph.Edges.Count} dependencies, {graph.Modules.Count} modules");
+        context.Log($"{graph.Nodes.Count} types, {graph.Nodes.Sum(n => n.Members.Count)} members, " +
+                    $"{graph.Edges.Count} type dependencies, {graph.MemberEdges.Count} member links, " +
+                    $"{graph.EntryPoints.Count} entry points");
+        context.Report("Done", 1, force: true);
         return graph;
     }
 }

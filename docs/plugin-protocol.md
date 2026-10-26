@@ -125,9 +125,73 @@ protons, everything else as neutrons.
 | `uses`       | reads/writes a field, property or event of `target` |
 | `references` | any other mention of `target` (parameters, locals, generics, casts, `typeof`) |
 
+Edges may carry `"confidence"`: omitted means **certain** (resolved by a compiler/type checker),
+`"likely"` (type hints, imports, virtual dispatch, framework conventions), `"guess"` (name match
+only). Dynamic languages will produce many guesses; the viewer draws them more faintly.
+
+### Members and flow (optional, additive)
+
+For simulation the format goes below types. Each node may list its `members`:
+
+```json
+"members": [
+  { "id": "cs:Shop.Services.OrderService.Place(Shop.Domain.Order)", "name": "Place", "kind": "method",
+    "visibility": "public", "isStatic": false, "signature": "void Place(Order order)",
+    "file": "Shop/Services/OrderService.cs", "line": 31, "attributes": {} }
+]
+```
+
+Member kinds: `method`, `constructor`, `property`, `field`, `event` (C# events and Godot signals,
+with `"signal": "true"`), and `function` for free functions. Languages with free functions
+(Python, PHP, JS) put them on a node of kind `module` that represents the file/module.
+
+`memberEdges` connect members, in source order:
+
+```json
+"memberEdges": [
+  { "source": "cs:…OrderService.Place(…)", "target": "cs:…OrderRepository.Save(…)", "kind": "calls",
+    "weight": 1, "order": 3, "line": 40 },
+  { "source": "cs:…Player.TakeDamage(int)", "target": "cs:…Player.Died", "kind": "raises", "weight": 1, "order": 1, "line": 22 },
+  { "source": "cs:…Player.Died", "target": "cs:…Hud.OnPlayerDied()", "kind": "triggers", "weight": 1, "order": 0, "line": 15,
+    "confidence": "likely" }
+]
+```
+
+| Kind       | Meaning |
+|------------|---------|
+| `calls`    | source invokes target (calls through interfaces/virtuals also fan out to each implementation, `likely`) |
+| `creates`  | source constructs via target constructor |
+| `reads`    | source reads target field/property |
+| `writes`   | source assigns target field/property |
+| `raises`   | source raises/emits target event or signal |
+| `triggers` | target handler runs when source event/signal is raised (from `+=`, `Connect`, framework wiring) |
+
+`order` is the position of the edge's first occurrence among the source member's edges, so a
+simulation can play a method's calls in the order they're written.
+
+`entryPoints` mark members something outside the code invokes:
+
+```json
+"entryPoints": [
+  { "member": "cs:Game.Player._Process(double)", "trigger": "frame", "label": "Player._Process", "source": "godot" },
+  { "member": "cs:Game.Hud.OnStartPressed()", "trigger": "event", "label": "Button.Pressed → OnStartPressed", "source": "csharp" }
+]
+```
+
+Triggers: `frame`, `physics`, `input`, `draw`, `startup`, `shutdown`, `event`, `request`, `job`
+(others allowed). Engine and framework conventions (Godot callbacks, Laravel routes, Django views…)
+are how a probe finds them.
+
 ## 5. The merged graph: `valence.graph/1`
 
 The core's output adds `generator`, `repo` (`root`, `name`, `commit`, `branch`, `generatedAt`,
-`churnWindowDays`), `probes`, and `moduleEdges` (node edges aggregated between leaf modules). The C#
+`churnWindowDays`), `probes`, and `moduleEdges` (node edges aggregated between leaf modules), and
+carries `memberEdges` and `entryPoints` through (dropping any that point at unknown members). The C#
 types for both formats live in `src/Valence.Schema/Model.cs`. Bump the version suffix on breaking
-changes; consumers reject versions they don't know.
+changes; consumers reject versions they don't know. Optional additive fields don't bump it.
+
+## 6. Progress
+
+Built-in probes receive an `AnalysisContext` and report `(phase, fraction, detail)` plus honour
+cancellation; the viewer shows this in its progress dialog. External probes report nothing beyond
+their stderr log, so they appear as a single step.

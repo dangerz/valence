@@ -4,7 +4,8 @@ namespace Valence.Schema;
 
 /// <summary>
 /// Versioned format identifiers. Bump the number on breaking changes;
-/// consumers must reject versions they don't understand.
+/// consumers must reject versions they don't understand. Additive, optional fields
+/// (like members, memberEdges and entryPoints) don't bump the version.
 /// </summary>
 public static class SchemaIds
 {
@@ -31,6 +32,9 @@ public static class NodeKinds
     public const string Record = "record";
     public const string RecordStruct = "record-struct";
     public const string Delegate = "delegate";
+
+    /// <summary>A file/module that holds free functions (Python, PHP, JS). C# never emits it.</summary>
+    public const string Module = "module";
 }
 
 /// <summary>Well-known edge kinds, roughly from strongest to weakest coupling.</summary>
@@ -44,6 +48,76 @@ public static class EdgeKinds
     public const string Calls = "calls";
     public const string Uses = "uses";
     public const string References = "references";
+}
+
+/// <summary>Members of a node: the things data flows between.</summary>
+public static class MemberKinds
+{
+    public const string Method = "method";
+    public const string Constructor = "constructor";
+    public const string Property = "property";
+    public const string Field = "field";
+    public const string Event = "event";
+    public const string Function = "function";
+}
+
+/// <summary>Member-level edge kinds.</summary>
+public static class MemberEdgeKinds
+{
+    /// <summary>Source method invokes target method/constructor.</summary>
+    public const string Calls = "calls";
+
+    /// <summary>Source method constructs an instance via target constructor.</summary>
+    public const string Creates = "creates";
+
+    /// <summary>Source method reads target field/property.</summary>
+    public const string Reads = "reads";
+
+    /// <summary>Source method assigns target field/property.</summary>
+    public const string Writes = "writes";
+
+    /// <summary>Source method raises/emits target event or signal.</summary>
+    public const string Raises = "raises";
+
+    /// <summary>Source event/signal, when raised, runs target handler.</summary>
+    public const string Triggers = "triggers";
+}
+
+/// <summary>How sure the probe is that an edge exists.</summary>
+public static class Confidence
+{
+    /// <summary>Resolved by a compiler/type checker.</summary>
+    public const string Certain = "certain";
+
+    /// <summary>Resolved from type hints, imports, virtual dispatch or framework conventions.</summary>
+    public const string Likely = "likely";
+
+    /// <summary>Matched by name only.</summary>
+    public const string Guess = "guess";
+
+    public static int Rank(string? confidence) => confidence switch
+    {
+        null or Certain => 2,
+        Likely => 1,
+        _ => 0,
+    };
+
+    /// <summary>The stronger of two confidences (null means certain).</summary>
+    public static string? Strongest(string? a, string? b) => Rank(a) >= Rank(b) ? a : b;
+}
+
+/// <summary>What starts an entry point running. Simulation plays one trigger at a time.</summary>
+public static class Triggers
+{
+    public const string Frame = "frame";
+    public const string Physics = "physics";
+    public const string Input = "input";
+    public const string Draw = "draw";
+    public const string Startup = "startup";
+    public const string Shutdown = "shutdown";
+    public const string Event = "event";
+    public const string Request = "request";
+    public const string Job = "job";
 }
 
 /// <summary>Well-known metric keys. Probes and the core may add any others.</summary>
@@ -88,6 +162,8 @@ public sealed class ProbeOutput
     public List<ModuleInfo> Modules { get; set; } = new();
     public List<NodeInfo> Nodes { get; set; } = new();
     public List<EdgeInfo> Edges { get; set; } = new();
+    public List<MemberEdgeInfo> MemberEdges { get; set; } = new();
+    public List<EntryPointInfo> EntryPoints { get; set; } = new();
     public List<DiagnosticInfo> Diagnostics { get; set; } = new();
 }
 
@@ -104,6 +180,10 @@ public sealed class Graph
 
     /// <summary>Node edges aggregated to leaf modules (excludes edges within one module).</summary>
     public List<ModuleEdgeInfo> ModuleEdges { get; set; } = new();
+
+    /// <summary>Method/field-level flow: calls, reads, writes, events. Used for simulation.</summary>
+    public List<MemberEdgeInfo> MemberEdges { get; set; } = new();
+    public List<EntryPointInfo> EntryPoints { get; set; } = new();
     public List<DiagnosticInfo> Diagnostics { get; set; } = new();
 }
 
@@ -138,7 +218,7 @@ public sealed class ModuleInfo
     public string? Path { get; set; }
 }
 
-/// <summary>A type-level unit of code: class, interface, struct, ...</summary>
+/// <summary>A type-level unit of code: class, interface, struct, module of functions, ...</summary>
 public sealed class NodeInfo
 {
     /// <summary>Globally unique; probes prefix with their language (e.g. "cs:").</summary>
@@ -164,9 +244,31 @@ public sealed class NodeInfo
     /// <summary>Id of the enclosing node for nested types.</summary>
     public string? Container { get; set; }
 
+    /// <summary>Methods, constructors, properties, fields and events declared on this node.</summary>
+    public List<MemberInfo> Members { get; set; } = new();
+
     public Dictionary<string, double> Metrics { get; set; } = new();
 
     /// <summary>Free-form string facts, e.g. "externalBase": "Node3D".</summary>
+    public Dictionary<string, string> Attributes { get; set; } = new();
+}
+
+/// <summary>A method, constructor, property, field, event/signal or free function.</summary>
+public sealed class MemberInfo
+{
+    /// <summary>Globally unique, language-prefixed (e.g. "cs:Shop.OrderService.Place(Order)").</summary>
+    public string Id { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string Kind { get; set; } = MemberKinds.Method;
+    public string Visibility { get; set; } = "public";
+    public bool IsStatic { get; set; }
+
+    /// <summary>Human-readable signature, e.g. "void Place(Order order)".</summary>
+    public string? Signature { get; set; }
+    public string File { get; set; } = "";
+    public int Line { get; set; }
+
+    /// <summary>Free-form facts, e.g. "signal": "true", "override": "true".</summary>
     public Dictionary<string, string> Attributes { get; set; } = new();
 }
 
@@ -179,6 +281,44 @@ public sealed class EdgeInfo
 
     /// <summary>Number of occurrences in source code.</summary>
     public int Weight { get; set; } = 1;
+
+    /// <summary>Null means certain.</summary>
+    public string? Confidence { get; set; }
+}
+
+/// <summary>A member-level flow edge between two members (ids from <see cref="MemberInfo.Id"/>).</summary>
+public sealed class MemberEdgeInfo
+{
+    public string Source { get; set; } = "";
+    public string Target { get; set; } = "";
+    public string Kind { get; set; } = MemberEdgeKinds.Calls;
+
+    /// <summary>Number of occurrences.</summary>
+    public int Weight { get; set; } = 1;
+
+    /// <summary>Position of the first occurrence among the source member's edges (0-based, source order).</summary>
+    public int Order { get; set; }
+
+    /// <summary>Line of the first occurrence.</summary>
+    public int Line { get; set; }
+
+    /// <summary>Null means certain.</summary>
+    public string? Confidence { get; set; }
+}
+
+/// <summary>A member something outside the code calls: engine callbacks, routes, Main, event handlers.</summary>
+public sealed class EntryPointInfo
+{
+    public string Member { get; set; } = "";
+
+    /// <summary>One of <see cref="Triggers"/> (others allowed).</summary>
+    public string Trigger { get; set; } = Triggers.Startup;
+
+    /// <summary>Shown in menus, e.g. "Player._Process" or "POST /orders".</summary>
+    public string Label { get; set; } = "";
+
+    /// <summary>What recognized it: "godot", "dotnet", "laravel", ...</summary>
+    public string Source { get; set; } = "";
 }
 
 public sealed class ModuleEdgeInfo

@@ -1,9 +1,12 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Godot;
+using Valence.Core;
 using Valence.Schema;
 
 namespace Valence.Viewer;
@@ -12,44 +15,65 @@ namespace Valence.Viewer;
 /// Scene root. Loads a graph, builds the atoms/bonds/nucleons, and handles selection and input.
 ///
 /// Hierarchy on screen: molecule (project) → atom (namespace / system) → nucleon (class).
+/// Clicking an atom opens it: its classes spread out with labels, and ports on the rim lead
+/// to the systems it's bonded with.
 /// </summary>
 public partial class Main : Node3D
 {
     private const string DemoGraph = "res://samples/demo.valence.json";
     private const float RecencyWindowDays = 14f;
-    private const int MaxAtomLines = 600;
+    private const int MaxFocusLines = 900;
+    private const float OpenSpeed = 2.8f;
 
     private readonly HashSet<string> _enabledKinds = new(Palette.EdgeKindOrder);
     private readonly ConcurrentQueue<Action> _mainThread = new();
-    private readonly HashSet<NodeData> _selectedNeighbors = new();
+    private readonly HashSet<NodeData> _lit = new();
 
     private SceneAssets _assets = null!;
     private OrbitCamera _camera = null!;
     private Hud _hud = null!;
+    private ViewerSettings _settings = null!;
 
     private Node3D? _world;
     private GraphModel? _model;
     private NucleonRenderer? _nucleons;
     private BondRenderer? _bonds;
     private DetailLines? _lines;
+    private FocusView? _focusView;
     private Dictionary<string, Vector2> _pins = new();
     private ColorMode _colorMode = ColorMode.Visibility;
+    private int _linkDepth = 1;
 
+    // Selection: the focused (opened) system, and optionally a selected class inside it.
     private AtomData? _focusAtom;
     private NodeData? _selectedNode;
 
+    /// <summary>The class whose links are lit: the selection, or the hovered class when nothing is selected.</summary>
+    private NodeData? _anchor;
+
+    // Hover.
+    private NodeData? _hoverNode;
+    private AtomData? _hoverAtom;
+    private PortData? _hoverPort;
+
+    // Opening animation.
+    private AtomData? _opened;
+    private float _openRadius;
+    private float _openAmount;
+    private float _openTarget;
+
+    // Mouse.
     private bool _leftDown;
     private bool _dragged;
     private Vector2 _pressPosition;
     private AtomData? _dragAtom;
     private Vector3 _dragOffset;
 
-    private string _lastSearch = "";
-    private int _searchIndex;
-    private bool _analyzing;
+    private CancellationTokenSource? _analysis;
 
     public override void _Ready()
     {
+        _settings = ViewerSettings.Load();
         _assets = new SceneAssets();
         BuildEnvironment();
 
@@ -58,29 +82,12 @@ public partial class Main : Node3D
         _camera.MakeCurrent();
 
         _hud = new Hud();
-        _hud.Build();
+        _hud.Build(_settings.ShowOutline, _settings.ShowInspector, _settings.ShowLegend);
         var canvas = new CanvasLayer();
         AddChild(canvas);
         canvas.AddChild(_hud);
-
-        _hud.GraphFileChosen += LoadGraph;
-        _hud.SourceFolderChosen += AnalyzeSourceFolder;
-        _hud.SearchSubmitted += Search;
-        _hud.ColorModeChanged += mode =>
-        {
-            _colorMode = mode;
-            UpdateLegend();
-            ApplyColors();
-        };
-        _hud.FrameAllRequested += () => FrameAll(false);
-        _hud.ResetLayoutRequested += ResetLayout;
-        _hud.EdgeKindToggled += (kind, on) =>
-        {
-            if (on) _enabledKinds.Add(kind);
-            else _enabledKinds.Remove(kind);
-            UpdateLines();
-        };
-        _hud.LinkClicked += OnLink;
+        WireHud();
+        _hud.SetRecent(_settings.RecentFolders);
 
         var startup = StartupGraph();
         GD.Print($"[valence] viewer ready; loading {startup}");
@@ -90,19 +97,67 @@ public partial class Main : Node3D
     public override void _Process(double delta)
     {
         while (_mainThread.TryDequeue(out var action)) action();
+
+        if (_opened != null && !Mathf.IsEqualApprox(_openAmount, _openTarget))
+        {
+            _openAmount = Mathf.MoveToward(_openAmount, _openTarget, (float)delta * OpenSpeed);
+            ApplyOpenAmount();
+            if (_openAmount <= 0f && _openTarget <= 0f) FinishClosing();
+        }
+    }
+
+    private void WireHud()
+    {
+        _hud.SourceFolderChosen += AnalyzeSourceFolder;
+        _hud.GraphFileChosen += LoadGraph;
+        _hud.RecentFolderChosen += OpenRecent;
+        _hud.ReanalyzeRequested += Reanalyze;
+        _hud.QuitRequested += () => GetTree().Quit();
+        _hud.ColorModeChanged += mode =>
+        {
+            _colorMode = mode;
+            _hud.SetColorMode(mode);
+            UpdateLegend();
+            ApplyColors();
+        };
+        _hud.LinkDepthChanged += depth =>
+        {
+            _linkDepth = depth;
+            RefreshSelection();
+        };
+        _hud.FrameAllRequested += () => FrameAll(false);
+        _hud.ResetLayoutRequested += ResetLayout;
+        _hud.BackRequested += Back;
+        _hud.ClearSelectionRequested += ClearSelection;
+        _hud.EdgeKindToggled += (kind, on) =>
+        {
+            if (on) _enabledKinds.Add(kind);
+            else _enabledKinds.Remove(kind);
+            RefreshSelection();
+        };
+        _hud.LinkClicked += OnLink;
+        _hud.PanelsChanged += (outline, inspector, legend) =>
+        {
+            _settings.ShowOutline = outline;
+            _settings.ShowInspector = inspector;
+            _settings.ShowLegend = legend;
+            _settings.Save();
+        };
+        _hud.PointerEnteredUi += ClearHover;
+        _hud.Progress.CancelRequested += () => _analysis?.Cancel();
     }
 
     // ---------------------------------------------------------------- loading
 
-    private static string StartupGraph()
+    private string StartupGraph()
     {
         var args = OS.GetCmdlineUserArgs();
         for (var i = 0; i < args.Length - 1; i++)
         {
             if (args[i] == "--graph") return args[i + 1];
         }
-        var last = ViewerSettings.LastGraph;
-        return !string.IsNullOrEmpty(last) && System.IO.File.Exists(last) ? last : DemoGraph;
+        var last = _settings.LastGraph;
+        return !string.IsNullOrEmpty(last) && File.Exists(last) ? last : DemoGraph;
     }
 
     private void LoadGraph(string path)
@@ -120,6 +175,8 @@ public partial class Main : Node3D
         }
 
         ClearSelection();
+        _opened = null;
+        _openAmount = _openTarget = 0f;
         _world?.QueueFree();
         _world = new Node3D { Name = "World" };
         AddChild(_world);
@@ -147,9 +204,11 @@ public partial class Main : Node3D
         _lines.Init(_assets);
         _world.AddChild(_lines);
 
+        _focusView = new FocusView();
+        _world.AddChild(_focusView);
+
         foreach (var molecule in _model.Molecules)
         {
-            var tint = Palette.MoleculeHue(molecule.Id);
             molecule.Label = new Label3D
             {
                 Text = molecule.Name,
@@ -158,7 +217,7 @@ public partial class Main : Node3D
                 OutlineSize = 18,
                 Billboard = BaseMaterial3D.BillboardModeEnum.Enabled,
                 NoDepthTest = true,
-                Modulate = tint,
+                Modulate = Palette.MoleculeHue(molecule.Id),
                 VisibilityRangeBegin = 45f,
                 VisibilityRangeBeginMargin = 10f,
                 VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Self,
@@ -167,55 +226,95 @@ public partial class Main : Node3D
             PlaceMoleculeLabel(molecule);
         }
 
+        _hud.Outline.SetModel(_model);
         UpdateLegend();
         ApplyColors();
         FrameAll(true);
+        ShowSummary();
 
         var repo = graph.Repo;
         var commit = string.IsNullOrEmpty(repo.Commit) ? "" : $" @ {repo.Commit[..Math.Min(8, repo.Commit.Length)]}";
         var branch = string.IsNullOrEmpty(repo.Branch) ? "" : $" ({repo.Branch})";
         _hud.SetRepo($"{repo.Name}{branch}{commit}  ·  {repo.Root}");
+        _hud.SetReanalyzeEnabled(Directory.Exists(repo.Root));
         _hud.SetStatus($"{_model.Nodes.Count} classes in {_model.AtomList.Count} systems, " +
                        $"{_model.Molecules.Count} projects, {_model.Bonds.Count} bonds · {path}");
         DisplayServer.WindowSetTitle($"Valence — {repo.Name}");
         GD.Print($"[valence] loaded {path}: {_model.Nodes.Count} classes, {_model.AtomList.Count} systems, " +
-                 $"{_model.Bonds.Count} bonds, max layer {_model.MaxLayer}; world children {_world.GetChildCount()}");
-        if (!path.StartsWith("res://", StringComparison.Ordinal)) ViewerSettings.LastGraph = path;
+                 $"{_model.Bonds.Count} bonds, {graph.EntryPoints.Count} entry points, max layer {_model.MaxLayer}");
+
+        if (!path.StartsWith("res://", StringComparison.Ordinal))
+        {
+            _settings.LastGraph = path;
+            _settings.Save();
+        }
+    }
+
+    private void OpenRecent(string folder)
+    {
+        // Reopen the saved graph instantly if there is one; File ▸ Re-analyze refreshes it.
+        var cached = RepoAnalyzer.DefaultOutputPath(folder);
+        if (File.Exists(cached)) LoadGraph(cached);
+        else AnalyzeSourceFolder(folder);
+    }
+
+    private void Reanalyze()
+    {
+        var root = _model?.Graph.Repo.Root;
+        if (!string.IsNullOrEmpty(root) && Directory.Exists(root)) AnalyzeSourceFolder(root);
+        else _hud.SetStatus("This graph has no source folder on this machine to re-analyze.");
     }
 
     private void AnalyzeSourceFolder(string directory)
     {
-        if (_analyzing)
+        if (_analysis != null)
         {
             _hud.SetStatus("An analysis is already running…");
             return;
         }
 
-        _analyzing = true;
-        _hud.SetStatus($"Analyzing {directory} (read-only)…");
+        var cancellation = new CancellationTokenSource();
+        _analysis = cancellation;
+        _hud.Progress.Begin($"Analyzing {Path.GetFileName(Path.TrimEndingDirectorySeparator(directory))} (read-only)");
         GD.Print($"[valence] analyzing {directory}");
 
-        void Progress(string line) => _mainThread.Enqueue(() =>
-        {
-            _hud.SetStatus(line.Trim());
-            GD.Print($"[valence] {line}");
-        });
+        var context = new AnalysisContext(
+            line => _mainThread.Enqueue(() =>
+            {
+                _hud.Progress.AppendLog(line);
+                GD.Print($"[valence] {line}");
+            }),
+            progress => _mainThread.Enqueue(() => _hud.Progress.SetProgress(progress)),
+            cancellation.Token);
 
-        Task.Run(() => AnalyzerLauncher.Analyze(directory, Progress))
+        Task.Run(() => AnalyzerLauncher.Analyze(directory, context), cancellation.Token)
             .ContinueWith(task =>
             {
                 var path = task.IsCompletedSuccessfully ? task.Result : null;
                 var error = task.Exception?.GetBaseException();
+                var cancelled = task.IsCanceled || error is OperationCanceledException;
                 _mainThread.Enqueue(() =>
                 {
-                    _analyzing = false;
+                    _analysis = null;
+                    cancellation.Dispose();
                     if (path != null)
                     {
+                        _hud.Progress.Finish();
+                        _settings.AddRecentFolder(Path.TrimEndingDirectorySeparator(directory));
+                        _settings.Save();
+                        _hud.SetRecent(_settings.RecentFolders);
                         LoadGraph(path);
-                        return;
                     }
-                    _hud.SetStatus($"Analysis failed: {error?.Message ?? "unknown error"}");
-                    GD.PushError($"[valence] analysis of {directory} failed: {error}");
+                    else if (cancelled)
+                    {
+                        _hud.Progress.Finish();
+                        _hud.SetStatus("Analysis cancelled.");
+                    }
+                    else
+                    {
+                        _hud.Progress.Fail(error?.Message ?? "unknown error");
+                        GD.PushError($"[valence] analysis of {directory} failed: {error}");
+                    }
                 });
             });
     }
@@ -246,54 +345,49 @@ public partial class Main : Node3D
 
     private void FocusAtom(AtomData atom, bool fly = true)
     {
+        if (_opened != atom) BeginOpening(atom);
+        else _openTarget = 1f; // it may be mid-close
         _focusAtom = atom;
         _selectedNode = null;
-        _selectedNeighbors.Clear();
         RefreshSelection();
         if (_model != null) _hud.ShowInfo(InfoText.ForAtom(atom, _model));
-        if (fly) _camera.FlyTo(atom.Position, atom.Radius * 3.2f + 6f);
+        _hud.Outline.Reveal("atom:" + atom.Id);
+        _hud.SetSelection(atom.Name);
+        if (fly) _camera.FlyTo(atom.Position, _openRadius * 2.4f + 4f);
     }
 
     private void SelectNode(NodeData node, bool fly = true)
     {
-        _focusAtom = node.Atom;
+        if (_focusAtom != node.Atom) FocusAtom(node.Atom, fly: false);
         _selectedNode = node;
-        _selectedNeighbors.Clear();
-        if (_model != null)
-        {
-            foreach (var edge in node.Outgoing)
-            {
-                if (_model.Nodes.TryGetValue(edge.Target, out var target)) _selectedNeighbors.Add(target);
-            }
-            foreach (var edge in node.Incoming)
-            {
-                if (_model.Nodes.TryGetValue(edge.Source, out var source)) _selectedNeighbors.Add(source);
-            }
-            _hud.ShowInfo(InfoText.ForNode(node, _model));
-        }
         RefreshSelection();
-        if (fly) _camera.FlyTo(node.WorldPosition, node.Atom.Radius * 2.2f + 3f);
+        if (_model != null) _hud.ShowInfo(InfoText.ForNode(node, _model));
+        _hud.Outline.Reveal("node:" + node.Info.Id);
+        _hud.SetSelection($"{node.Atom.Name} ▸ {node.Info.Name}");
+        // Aim at where the class will be once the atom is fully open.
+        if (fly) _camera.FlyTo(node.Atom.Position + node.ExpandedOffset, Mathf.Max(7f, _openRadius * 1.3f));
     }
 
     private void ClearSelection()
     {
         _focusAtom = null;
         _selectedNode = null;
-        _selectedNeighbors.Clear();
-        _hud.HideInfo();
+        if (_opened != null) _openTarget = 0f;
         RefreshSelection();
+        ShowSummary();
+        _hud.Outline.Reveal("");
+        _hud.SetSelection("");
     }
 
-    private void RefreshSelection()
+    private void Back()
     {
-        if (_model == null) return;
-        foreach (var atom in _model.AtomList)
-        {
-            atom.View?.SetState(atom == _focusAtom, _focusAtom != null && atom != _focusAtom);
-        }
-        _bonds?.SetFocus(_focusAtom);
-        ApplyColors();
-        UpdateLines();
+        if (_selectedNode != null) FocusAtom(_selectedNode.Atom, fly: false);
+        else ClearSelection();
+    }
+
+    private void ShowSummary()
+    {
+        if (_model != null) _hud.ShowInfo(InfoText.ForSummary(_model));
     }
 
     private void OnLink(string meta)
@@ -309,45 +403,84 @@ public partial class Main : Node3D
         }
     }
 
-    private void Search(string text)
+    /// <summary>Recomputes which classes are lit, then refreshes colors, labels, bonds and lines.</summary>
+    private void RefreshSelection()
     {
-        if (_model == null || string.IsNullOrWhiteSpace(text)) return;
-        text = text.Trim();
-        if (text != _lastSearch)
+        if (_model == null) return;
+
+        _anchor = _selectedNode ?? (_hoverNode != null && _hoverNode.Atom == _focusAtom ? _hoverNode : null);
+        _lit.Clear();
+        if (_anchor != null)
         {
-            _lastSearch = text;
-            _searchIndex = 0;
+            var depth = _selectedNode != null ? _linkDepth : 1;
+            var frontier = new List<NodeData> { _anchor };
+            _lit.Add(_anchor);
+            for (var hop = 0; hop < depth && frontier.Count > 0; hop++)
+            {
+                var next = new List<NodeData>();
+                foreach (var node in frontier)
+                {
+                    foreach (var neighbor in _model.Neighbors(node, _enabledKinds))
+                    {
+                        if (_lit.Add(neighbor)) next.Add(neighbor);
+                    }
+                }
+                frontier = next;
+            }
         }
 
-        var matches = _model.Nodes.Values
-            .Where(n => n.Info.Name.Contains(text, StringComparison.OrdinalIgnoreCase)
-                        || n.Info.FullName.Contains(text, StringComparison.OrdinalIgnoreCase))
-            .OrderBy(n => n.Info.Name.Equals(text, StringComparison.OrdinalIgnoreCase) ? 0
-                : n.Info.Name.StartsWith(text, StringComparison.OrdinalIgnoreCase) ? 1 : 2)
-            .ThenBy(n => n.Info.Name.Length)
-            .ThenBy(n => n.Info.FullName, StringComparer.Ordinal)
-            .Cast<object>()
-            .Concat(_model.AtomList.Where(a => a.Name.Contains(text, StringComparison.OrdinalIgnoreCase)))
-            .ToList();
-
-        if (matches.Count == 0)
+        foreach (var atom in _model.AtomList)
         {
-            _hud.SetStatus($"No class or system matches \"{text}\"");
-            return;
+            atom.View?.SetState(atom == _focusAtom, _focusAtom != null && atom != _focusAtom);
         }
+        _bonds?.SetFocus(_focusAtom);
+        _focusView?.SetHighlight(_lit, _anchor, _hoverNode);
+        ApplyColors();
+        UpdateLines();
+    }
 
-        var index = _searchIndex % matches.Count;
-        _searchIndex++;
-        switch (matches[index])
-        {
-            case NodeData node:
-                SelectNode(node);
-                break;
-            case AtomData atom:
-                FocusAtom(atom);
-                break;
-        }
-        _hud.SetStatus($"Match {index + 1} of {matches.Count} for \"{text}\" — press Enter for the next");
+    // ---------------------------------------------------------------- opening an atom
+
+    private void BeginOpening(AtomData atom)
+    {
+        if (_model == null || _focusView == null) return;
+        if (_opened != null && _opened != atom) CloseImmediately(_opened);
+        _opened = atom;
+        _openRadius = Layout.Expand(atom, _model);
+        _openAmount = 0f;
+        _openTarget = 1f;
+        _focusView.Open(atom, _model, _assets, _openRadius);
+    }
+
+    private void ApplyOpenAmount()
+    {
+        if (_opened == null) return;
+        var t = Mathf.SmoothStep(0f, 1f, _openAmount);
+        foreach (var node in _opened.Nodes) node.LocalOffset = node.PackedOffset.Lerp(node.ExpandedOffset, t);
+        _opened.DisplayRadius = Mathf.Lerp(_opened.Radius, _openRadius, t);
+        _opened.View?.SetExpansion(t, _openRadius);
+        _nucleons?.UpdateAtom(_opened);
+        _bonds?.UpdateAtom(_opened);
+        _focusView?.UpdateLayout(t);
+        UpdateLines();
+    }
+
+    private void FinishClosing()
+    {
+        if (_opened == null) return;
+        CloseImmediately(_opened);
+        _opened = null;
+        UpdateLines();
+    }
+
+    private void CloseImmediately(AtomData atom)
+    {
+        foreach (var node in atom.Nodes) node.LocalOffset = node.PackedOffset;
+        atom.DisplayRadius = atom.Radius;
+        atom.View?.SetExpansion(0f, atom.Radius);
+        _nucleons?.UpdateAtom(atom);
+        _bonds?.UpdateAtom(atom);
+        _focusView?.Close();
     }
 
     // ---------------------------------------------------------------- colors & lines
@@ -370,10 +503,10 @@ public partial class Main : Node3D
         };
         var glow = RecencyGlow(node, model);
 
-        if (_selectedNode != null)
+        if (_anchor != null)
         {
-            if (node == _selectedNode) return new Color(Palette.Selected.R, Palette.Selected.G, Palette.Selected.B, 1f);
-            if (!_selectedNeighbors.Contains(node))
+            if (node == _anchor) return new Color(Palette.Selected.R, Palette.Selected.G, Palette.Selected.B, 1f);
+            if (!_lit.Contains(node))
             {
                 color = color.Darkened(0.7f);
                 glow *= 0.15f;
@@ -397,50 +530,53 @@ public partial class Main : Node3D
         return Mathf.Clamp(1f - (float)ageDays / RecencyWindowDays, 0f, 1f);
     }
 
+    /// <summary>
+    /// Inside an opened atom: links between its classes, plus links to other systems drawn to the
+    /// matching rim port. With a lit anchor, only links touching the lit set are drawn.
+    /// </summary>
     private void UpdateLines()
     {
         if (_lines == null || _model == null) return;
         var lines = new List<(Vector3 From, Vector3 To, Color Color)>();
-
-        if (_selectedNode is { } selected)
+        var atom = _opened;
+        if (atom == null || atom != _focusAtom || _focusView == null)
         {
-            foreach (var edge in selected.Outgoing.Where(e => _enabledKinds.Contains(e.Kind)))
-            {
-                if (_model.Nodes.TryGetValue(edge.Target, out var target))
-                {
-                    lines.Add((selected.WorldPosition, target.WorldPosition, Palette.EdgeKind(edge.Kind)));
-                }
-            }
-            foreach (var edge in selected.Incoming.Where(e => _enabledKinds.Contains(e.Kind)))
-            {
-                if (_model.Nodes.TryGetValue(edge.Source, out var source))
-                {
-                    var color = Palette.EdgeKind(edge.Kind);
-                    lines.Add((source.WorldPosition, selected.WorldPosition, new Color(color.R, color.G, color.B, 0.6f)));
-                }
-            }
+            _lines.SetLines(lines);
+            return;
         }
-        else if (_focusAtom is { } atom)
+
+        bool Hot(NodeData a, NodeData b) =>
+            _anchor == null || a == _anchor || b == _anchor || (_selectedNode != null && _lit.Contains(a) && _lit.Contains(b));
+
+        void Add(Vector3 from, Vector3 to, string kind, bool hot)
         {
-            // Class-level links leaving or entering the focused system.
-            foreach (var node in atom.Nodes)
+            if (lines.Count >= MaxFocusLines) return;
+            var color = Palette.EdgeKind(kind);
+            color.A = _anchor == null ? 0.32f : hot ? 0.95f : 0f;
+            if (color.A > 0f) lines.Add((from, to, color));
+        }
+
+        foreach (var node in atom.Nodes)
+        {
+            foreach (var edge in node.Outgoing)
             {
-                foreach (var edge in node.Outgoing.Where(e => _enabledKinds.Contains(e.Kind)))
+                if (!_enabledKinds.Contains(edge.Kind) || !_model.Nodes.TryGetValue(edge.Target, out var target)) continue;
+                if (target.Atom == atom)
                 {
-                    if (lines.Count >= MaxAtomLines) break;
-                    if (_model.Nodes.TryGetValue(edge.Target, out var target) && target.Atom != atom)
-                    {
-                        lines.Add((node.WorldPosition, target.WorldPosition, Palette.EdgeKind(edge.Kind)));
-                    }
+                    Add(node.WorldPosition, target.WorldPosition, edge.Kind, Hot(node, target));
                 }
-                foreach (var edge in node.Incoming.Where(e => _enabledKinds.Contains(e.Kind)))
+                else if (_focusView.PortPosition(target.Atom) is { } port)
                 {
-                    if (lines.Count >= MaxAtomLines) break;
-                    if (_model.Nodes.TryGetValue(edge.Source, out var source) && source.Atom != atom)
-                    {
-                        var color = Palette.EdgeKind(edge.Kind);
-                        lines.Add((source.WorldPosition, node.WorldPosition, new Color(color.R, color.G, color.B, 0.45f)));
-                    }
+                    Add(node.WorldPosition, port, edge.Kind, Hot(node, target));
+                }
+            }
+            foreach (var edge in node.Incoming)
+            {
+                if (!_enabledKinds.Contains(edge.Kind) || !_model.Nodes.TryGetValue(edge.Source, out var source)) continue;
+                if (source.Atom == atom) continue; // drawn once, from the outgoing side
+                if (_focusView.PortPosition(source.Atom) is { } port)
+                {
+                    Add(port, node.WorldPosition, edge.Kind, Hot(source, node));
                 }
             }
         }
@@ -456,7 +592,12 @@ public partial class Main : Node3D
         _nucleons?.UpdateAtom(atom);
         _bonds?.UpdateAtom(atom);
         PlaceMoleculeLabel(atom.Molecule);
-        if (_focusAtom != null) UpdateLines();
+        if (_opened != null)
+        {
+            _focusView?.UpdatePorts();
+            _focusView?.UpdateLayout(Mathf.SmoothStep(0f, 1f, _openAmount));
+            UpdateLines();
+        }
     }
 
     private void PinAtom(AtomData atom)
@@ -465,12 +606,15 @@ public partial class Main : Node3D
         atom.Pinned = true;
         _pins[atom.Id] = new Vector2(atom.Position.X, atom.Position.Z);
         LayoutStore.Save(_model.Graph.Repo.Root, _pins);
-        _hud.SetStatus($"Moved {atom.Name}; layout saved. \"Reset layout\" undoes all moves.");
+        _hud.SetStatus($"Moved {atom.Name}; layout saved. View ▸ Reset Layout undoes all moves.");
     }
 
     private void ResetLayout()
     {
         if (_model == null) return;
+        if (_opened != null) CloseImmediately(_opened);
+        _opened = null;
+        _openAmount = _openTarget = 0f;
         _pins.Clear();
         LayoutStore.Save(_model.Graph.Repo.Root, _pins);
         Layout.Run(_model, _pins);
@@ -481,7 +625,7 @@ public partial class Main : Node3D
         _nucleons?.UpdateAll();
         _bonds?.UpdateAll();
         foreach (var molecule in _model.Molecules) PlaceMoleculeLabel(molecule);
-        UpdateLines();
+        if (_focusAtom != null) FocusAtom(_focusAtom, fly: false);
         _hud.SetStatus("Layout reset.");
     }
 
@@ -596,6 +740,7 @@ public partial class Main : Node3D
         {
             if (!_dragged && (motion.Position - _pressPosition).Length() > 4f) _dragged = true;
             if (!_dragged) return;
+            ClearHover();
             if (_dragAtom != null)
             {
                 if (RayPlane(motion.Position, _dragAtom.Position.Y) is { } hit) MoveAtom(_dragAtom, hit + _dragOffset);
@@ -607,22 +752,37 @@ public partial class Main : Node3D
         }
         else if (motion.ButtonMask.HasFlag(MouseButtonMask.Right) || motion.ButtonMask.HasFlag(MouseButtonMask.Middle))
         {
+            ClearHover();
             _camera.Pan(motion.Relative);
+        }
+        else
+        {
+            UpdateHover(motion.Position);
         }
     }
 
     private void HandleKey(InputEventKey key)
     {
+        var command = key.IsCommandOrControlPressed();
         switch (key.Keycode)
         {
+            case Key.O when command && key.ShiftPressed:
+                _hud.PopupOpenGraph();
+                break;
+            case Key.O when command:
+                _hud.PopupOpenSource();
+                break;
+            case Key.R when command:
+                Reanalyze();
+                break;
+            case Key.F when command:
+                _hud.FocusSearch();
+                break;
             case Key.F:
                 FrameAll(false);
                 break;
-            case Key.Escape when _selectedNode != null:
-                FocusAtom(_selectedNode.Atom);
-                break;
             case Key.Escape:
-                ClearSelection();
+                Back();
                 break;
         }
     }
@@ -630,6 +790,11 @@ public partial class Main : Node3D
     private void Click(Vector2 screen)
     {
         if (_model == null) return;
+        if (PickPort(screen) is { } port)
+        {
+            FocusAtom(port.Other);
+            return;
+        }
         if (_focusAtom != null && PickNode(screen, _focusAtom) is { } node)
         {
             SelectNode(node);
@@ -637,10 +802,59 @@ public partial class Main : Node3D
         }
         if (PickAtom(screen) is { } atom)
         {
-            FocusAtom(atom);
+            if (atom != _focusAtom) FocusAtom(atom);
+            else if (_selectedNode != null) FocusAtom(atom, fly: false); // empty space inside the open atom: deselect
             return;
         }
         ClearSelection();
+    }
+
+    // ---------------------------------------------------------------- hover
+
+    private void UpdateHover(Vector2 screen)
+    {
+        if (_model == null) return;
+        var port = PickPort(screen);
+        var node = port == null && _focusAtom != null ? PickNode(screen, _focusAtom) : null;
+        var atom = port == null && node == null ? PickAtom(screen) : null;
+        if (atom == _focusAtom) atom = null;
+
+        var changed = node != _hoverNode || atom != _hoverAtom || port != _hoverPort;
+        _hoverNode = node;
+        _hoverAtom = atom;
+        _hoverPort = port;
+
+        _hud.ShowTooltip(TooltipText(), screen);
+        if (!changed) return;
+        if (_selectedNode == null) RefreshSelection();
+        else _focusView?.SetHighlight(_lit, _anchor, _hoverNode);
+    }
+
+    private void ClearHover()
+    {
+        _hud.ShowTooltip(null, Vector2.Zero);
+        if (_hoverNode == null && _hoverAtom == null && _hoverPort == null) return;
+        _hoverNode = null;
+        _hoverAtom = null;
+        _hoverPort = null;
+        if (_selectedNode == null) RefreshSelection();
+        else _focusView?.SetHighlight(_lit, _anchor, null);
+    }
+
+    private string? TooltipText()
+    {
+        if (_hoverPort != null) return $"{_hoverPort.Text}\nClick to go to {_hoverPort.Other.Name}";
+        if (_hoverNode != null)
+        {
+            var info = _hoverNode.Info;
+            return $"{info.Name}  ·  {info.Kind}, {info.Visibility}\n" +
+                   $"used by {_hoverNode.FanIn} · depends on {_hoverNode.FanOut} · {info.Members.Count} members";
+        }
+        if (_hoverAtom != null)
+        {
+            return $"{_hoverAtom.Name}\n{_hoverAtom.Nodes.Count} classes · valence {_hoverAtom.Valence} · click to open";
+        }
+        return null;
     }
 
     // ---------------------------------------------------------------- picking
@@ -654,7 +868,8 @@ public partial class Main : Node3D
         var bestDistance = float.MaxValue;
         foreach (var atom in _model.AtomList)
         {
-            if (RaySphere(origin, direction, atom.Position, atom.Radius * 0.8f) is { } t && t < bestDistance)
+            var radius = atom == _opened ? atom.DisplayRadius * 0.9f : atom.Radius * 0.8f;
+            if (RaySphere(origin, direction, atom.Position, radius) is { } t && t < bestDistance)
             {
                 best = atom;
                 bestDistance = t;
@@ -671,9 +886,27 @@ public partial class Main : Node3D
         var bestDistance = float.MaxValue;
         foreach (var node in atom.Nodes)
         {
-            if (RaySphere(origin, direction, node.WorldPosition, node.Radius * 1.3f) is { } t && t < bestDistance)
+            if (RaySphere(origin, direction, node.WorldPosition, node.Radius * 1.4f) is { } t && t < bestDistance)
             {
                 best = node;
+                bestDistance = t;
+            }
+        }
+        return best;
+    }
+
+    private PortData? PickPort(Vector2 screen)
+    {
+        if (_focusView == null || _opened == null || _openAmount < 0.5f) return null;
+        var origin = _camera.ProjectRayOrigin(screen);
+        var direction = _camera.ProjectRayNormal(screen);
+        PortData? best = null;
+        var bestDistance = float.MaxValue;
+        foreach (var port in _focusView.Ports)
+        {
+            if (RaySphere(origin, direction, port.Position, 0.45f) is { } t && t < bestDistance)
+            {
+                best = port;
                 bestDistance = t;
             }
         }

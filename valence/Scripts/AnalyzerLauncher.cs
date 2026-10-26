@@ -18,8 +18,11 @@ public static class AnalyzerLauncher
     /// <summary>The repo checkout containing this Godot project (one level up from res://).</summary>
     private static string ToolsRoot => Path.GetFullPath(Path.Combine(ProjectSettings.GlobalizePath("res://"), ".."));
 
-    /// <summary>Returns the written graph path. Blocking and may throw: call from a worker thread.</summary>
-    public static string Analyze(string sourceFolder, Action<string> log)
+    /// <summary>
+    /// Returns the written graph path. Blocking: call from a worker thread. Throws
+    /// <see cref="OperationCanceledException"/> when the context is cancelled.
+    /// </summary>
+    public static string Analyze(string sourceFolder, AnalysisContext context)
     {
         // External probes are often "dotnet <dll>"; apps launched from the macOS Finder lack dotnet on PATH.
         if (string.IsNullOrEmpty(System.Environment.GetEnvironmentVariable("DOTNET_HOST_PATH")) && FindDotnet() is { } dotnet)
@@ -28,13 +31,13 @@ public static class AnalyzerLauncher
         }
 
         var options = new AnalyzeOptions();
-        var external = ProbeRegistry.Discover(ProbeRegistry.SearchPaths(ExtraProbeDirs()), log);
+        var external = ProbeRegistry.Discover(ProbeRegistry.SearchPaths(ExtraProbeDirs()), context.Log);
         var probes = RepoAnalyzer.Combine(new IProbe[] { new CSharpProbe() }, external, options);
 
-        var graph = RepoAnalyzer.Analyze(sourceFolder, probes, options, log);
+        var graph = RepoAnalyzer.Analyze(sourceFolder, probes, options, context);
         var outPath = RepoAnalyzer.DefaultOutputPath(graph.Repo.Root);
         ValenceJson.Write(outPath, graph);
-        log($"saved {outPath}");
+        context.Log($"saved {outPath}");
         return outPath;
     }
 

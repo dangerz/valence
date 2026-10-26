@@ -87,37 +87,52 @@ public static class LayoutStore
     }
 }
 
-/// <summary>Remembers the last opened graph.</summary>
-public static class ViewerSettings
+/// <summary>Viewer preferences in user://viewer.json: last graph, recent folders, panel visibility.</summary>
+public sealed class ViewerSettings
 {
+    private const int MaxRecent = 10;
+
+    public string? LastGraph { get; set; }
+    public List<string> RecentFolders { get; set; } = new();
+    public bool ShowOutline { get; set; } = true;
+    public bool ShowInspector { get; set; } = true;
+    public bool ShowLegend { get; set; } = true;
+
     private static string SettingsPath => ProjectSettings.GlobalizePath("user://viewer.json");
 
-    public static string? LastGraph
+    public static ViewerSettings Load()
     {
-        get
+        try
         {
-            try
+            if (File.Exists(SettingsPath))
             {
-                if (!File.Exists(SettingsPath)) return null;
-                var values = JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(SettingsPath));
-                return values != null && values.TryGetValue("lastGraph", out var path) ? path : null;
-            }
-            catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException)
-            {
-                return null;
+                return JsonSerializer.Deserialize<ViewerSettings>(File.ReadAllText(SettingsPath), ValenceJson.Options)
+                       ?? new ViewerSettings();
             }
         }
-        set
+        catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException)
         {
-            try
-            {
-                var values = new Dictionary<string, string> { ["lastGraph"] = value ?? "" };
-                File.WriteAllText(SettingsPath, JsonSerializer.Serialize(values));
-            }
-            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
-            {
-                GD.PushWarning($"Could not save viewer settings: {e.Message}");
-            }
+            GD.PushWarning($"Could not read viewer settings: {e.Message}");
         }
+        return new ViewerSettings();
+    }
+
+    public void Save()
+    {
+        try
+        {
+            File.WriteAllText(SettingsPath, JsonSerializer.Serialize(this, ValenceJson.Indented));
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            GD.PushWarning($"Could not save viewer settings: {e.Message}");
+        }
+    }
+
+    public void AddRecentFolder(string folder)
+    {
+        RecentFolders.RemoveAll(f => string.Equals(f, folder, StringComparison.Ordinal));
+        RecentFolders.Insert(0, folder);
+        if (RecentFolders.Count > MaxRecent) RecentFolders.RemoveRange(MaxRecent, RecentFolders.Count - MaxRecent);
     }
 }

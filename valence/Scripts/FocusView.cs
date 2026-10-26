@@ -1,0 +1,179 @@
+using System.Collections.Generic;
+using System.Linq;
+using Godot;
+
+namespace Valence.Viewer;
+
+/// <summary>Where a bond to another system leaves the opened atom.</summary>
+public sealed class PortData
+{
+    public PortData(AtomData other, BondData bond, string text)
+    {
+        Other = other;
+        Bond = bond;
+        Text = text;
+    }
+
+    public AtomData Other { get; }
+    public BondData Bond { get; }
+    public string Text { get; }
+    public Vector3 Position { get; set; }
+    public MeshInstance3D? Mesh { get; set; }
+    public Label3D? Label { get; set; }
+}
+
+/// <summary>
+/// The opened-atom overlay: a screen-sized label per class, and a labeled port on the rim for
+/// every bonded system ("→ Shop.Data ×12"). Links to other systems are drawn to these ports
+/// instead of across the scene.
+/// </summary>
+public partial class FocusView : Node3D
+{
+    private const float LabelPixelSize = 0.0005f;
+    private const float PortPixelSize = 0.0006f;
+
+    private readonly Dictionary<NodeData, Label3D> _labels = new();
+    private readonly List<PortData> _ports = new();
+    private readonly Dictionary<AtomData, PortData> _portByAtom = new();
+    private AtomData? _atom;
+    private float _radius;
+    private float _fade;
+    private ISet<NodeData>? _lit;
+    private NodeData? _anchor;
+    private NodeData? _hover;
+
+    public IReadOnlyList<PortData> Ports => _ports;
+
+    public Vector3? PortPosition(AtomData other) => _portByAtom.TryGetValue(other, out var port) ? port.Position : null;
+
+    public void Open(AtomData atom, GraphModel model, SceneAssets assets, float radius)
+    {
+        Close();
+        _atom = atom;
+        _radius = radius;
+
+        foreach (var node in atom.Nodes)
+        {
+            var label = new Label3D
+            {
+                Text = node.Info.Name,
+                FontSize = 32,
+                PixelSize = LabelPixelSize,
+                FixedSize = true,
+                OutlineSize = 10,
+                Billboard = BaseMaterial3D.BillboardModeEnum.Enabled,
+                NoDepthTest = true,
+                RenderPriority = 1,
+                OutlineRenderPriority = 0,
+            };
+            AddChild(label);
+            _labels[node] = label;
+        }
+
+        foreach (var bond in model.Bonds.Where(b => b.A == atom || b.B == atom))
+        {
+            var other = bond.Other(atom);
+            var outgoing = bond.WeightFrom(atom);
+            var incoming = bond.WeightFrom(other);
+            var text = outgoing > 0 && incoming > 0 ? $"⇄ {other.ShortName}  {outgoing} out · {incoming} in"
+                : outgoing > 0 ? $"→ {other.ShortName}  ×{outgoing}"
+                : $"← {other.ShortName}  ×{incoming}";
+            var color = bond.Covalent ? Palette.Covalent : Palette.Ionic;
+            var port = new PortData(other, bond, text)
+            {
+                Mesh = new MeshInstance3D
+                {
+                    Mesh = assets.Port,
+                    MaterialOverride = assets.PortMaterial(color),
+                    Scale = Vector3.One * 0.22f,
+                    CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+                },
+                Label = new Label3D
+                {
+                    Text = text,
+                    FontSize = 32,
+                    PixelSize = PortPixelSize,
+                    FixedSize = true,
+                    OutlineSize = 10,
+                    Billboard = BaseMaterial3D.BillboardModeEnum.Enabled,
+                    NoDepthTest = true,
+                    Modulate = color.Lightened(0.3f),
+                },
+            };
+            AddChild(port.Mesh);
+            AddChild(port.Label);
+            _ports.Add(port);
+            _portByAtom[other] = port;
+        }
+
+        UpdatePorts();
+        UpdateLayout(0f);
+    }
+
+    public void Close()
+    {
+        foreach (var child in GetChildren()) child.QueueFree();
+        _labels.Clear();
+        _ports.Clear();
+        _portByAtom.Clear();
+        _atom = null;
+        _lit = null;
+        _anchor = null;
+        _hover = null;
+    }
+
+    /// <summary>Ports sit on the opened rim, pointing at the system they lead to.</summary>
+    public void UpdatePorts()
+    {
+        if (_atom == null) return;
+        foreach (var port in _ports)
+        {
+            var direction = port.Other.Position - _atom.Position;
+            direction = direction.LengthSquared() < 1e-6f ? Vector3.Up : direction.Normalized();
+            port.Position = _atom.Position + direction * (_radius + 0.4f);
+            if (port.Mesh != null) port.Mesh.Position = port.Position;
+            if (port.Label != null) port.Label.Position = port.Position + Vector3.Up * 0.35f;
+        }
+    }
+
+    /// <param name="t">Opening progress, 0..1. Labels and ports fade in over the second half.</param>
+    public void UpdateLayout(float t)
+    {
+        _fade = Mathf.Clamp((t - 0.5f) * 2f, 0f, 1f);
+        Visible = t > 0.01f;
+        foreach (var (node, label) in _labels)
+        {
+            label.Position = node.WorldPosition + Vector3.Up * (node.Radius + 0.15f);
+            ApplyLabelStyle(node, label);
+        }
+        foreach (var port in _ports)
+        {
+            if (port.Mesh != null) port.Mesh.Visible = _fade > 0.01f;
+            if (port.Label != null)
+            {
+                var color = port.Label.Modulate;
+                port.Label.Modulate = new Color(color.R, color.G, color.B, _fade);
+                port.Label.OutlineModulate = new Color(0f, 0f, 0f, _fade);
+            }
+        }
+    }
+
+    /// <summary>Lit classes stay bright; everything else fades back. The anchor and hovered class turn white.</summary>
+    public void SetHighlight(ISet<NodeData>? lit, NodeData? anchor, NodeData? hover)
+    {
+        _lit = lit;
+        _anchor = anchor;
+        _hover = hover;
+        foreach (var (node, label) in _labels) ApplyLabelStyle(node, label);
+    }
+
+    private void ApplyLabelStyle(NodeData node, Label3D label)
+    {
+        var color = Palette.NodeKind(node.Info.Kind).Lightened(0.35f);
+        var alpha = 1f;
+        if (node == _anchor || node == _hover) color = Colors.White;
+        else if (_lit is { Count: > 0 } && !_lit.Contains(node)) alpha = 0.22f;
+        label.Modulate = new Color(color.R, color.G, color.B, alpha * _fade);
+        label.OutlineModulate = new Color(0f, 0f, 0f, alpha * _fade);
+    }
+}
