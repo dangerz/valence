@@ -82,7 +82,9 @@ public partial class Main : Node3D
         };
         _hud.LinkClicked += OnLink;
 
-        LoadGraph(StartupGraph());
+        var startup = StartupGraph();
+        GD.Print($"[valence] viewer ready; loading {startup}");
+        LoadGraph(startup);
     }
 
     public override void _Process(double delta)
@@ -113,6 +115,7 @@ public partial class Main : Node3D
         catch (Exception e)
         {
             _hud.SetStatus($"Could not open {path}: {e.Message}");
+            GD.PushError($"[valence] could not open {path}: {e}");
             return;
         }
 
@@ -175,6 +178,8 @@ public partial class Main : Node3D
         _hud.SetStatus($"{_model.Nodes.Count} classes in {_model.AtomList.Count} systems, " +
                        $"{_model.Molecules.Count} projects, {_model.Bonds.Count} bonds · {path}");
         DisplayServer.WindowSetTitle($"Valence — {repo.Name}");
+        GD.Print($"[valence] loaded {path}: {_model.Nodes.Count} classes, {_model.AtomList.Count} systems, " +
+                 $"{_model.Bonds.Count} bonds, max layer {_model.MaxLayer}; world children {_world.GetChildCount()}");
         if (!path.StartsWith("res://", StringComparison.Ordinal)) ViewerSettings.LastGraph = path;
     }
 
@@ -504,7 +509,14 @@ public partial class Main : Node3D
             max = new Vector3(Mathf.Max(max.X, p.X + r), Mathf.Max(max.Y, p.Y + r), Mathf.Max(max.Z, p.Z + r));
         }
         var size = (max - min).Length();
-        _camera.FlyTo((min + max) * 0.5f, size * 0.85f + 6f, immediate);
+        var center = (min + max) * 0.5f;
+        if (!float.IsFinite(size) || !center.IsFinite())
+        {
+            GD.PushError($"[valence] layout produced invalid positions (bounds {min} .. {max})");
+            return;
+        }
+        _camera.FlyTo(center, size * 0.85f + 6f, immediate);
+        if (immediate) GD.Print($"[valence] framing center {center}, size {size:F1}, camera at {_camera.GlobalPosition}");
     }
 
     // ---------------------------------------------------------------- input

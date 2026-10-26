@@ -13,14 +13,13 @@ config_version=5
 config/name="Valence"
 config/description="Read-only 3D map of a codebase: systems as atoms, classes as nucleons."
 run/main_scene="res://Main.tscn"
-config/features=PackedStringArray("4.7", "Forward Plus")
+config/features=PackedStringArray("4.7", "C#", "Forward Plus")
+run/flush_stdout_on_print=true
 config/icon="res://icon.svg"
 
 [display]
 
-window/size/viewport_width=1600
-window/size/viewport_height=960
-
+window/size/mode=4
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
 
