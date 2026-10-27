@@ -15,7 +15,7 @@ config/description="Read-only 3D map of a codebase: systems as atoms, classes as
 run/main_scene="res://Main.tscn"
 config/features=PackedStringArray("4.7", "C#", "Forward Plus")
 run/flush_stdout_on_print=true
-config/icon="res://icon.svg"
+config/icon="res://images/logo.png"
 
 [display]
 

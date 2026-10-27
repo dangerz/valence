@@ -920,16 +920,34 @@ public partial class Hud : Control
         };
         AddChild(_helpDialog);
 
-        _aboutDialog = new AcceptDialog
+        // About: the logo above the description. AcceptDialog sizes custom children to its content area.
+        _aboutDialog = new AcceptDialog { Title = "About Valence", MinSize = new Vector2I(520, 560) };
+        var about = new VBoxContainer();
+        about.AddThemeConstantOverride("separation", 12);
+        if (ResourceLoader.Exists(LogoPath))
         {
-            Title = "About Valence",
-            DialogText =
-                "Valence draws a codebase as chemistry: projects are molecules, systems are atoms,\n" +
-                "classes are nucleons and dependencies are bonds.\n\n" +
-                "It only reads the folder you point it at. Nothing is built, run or written there.",
-        };
+            about.AddChild(new TextureRect
+            {
+                Texture = GD.Load<Texture2D>(LogoPath),
+                ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+                StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
+                CustomMinimumSize = new Vector2(0f, 320f),
+                SizeFlagsVertical = SizeFlags.ExpandFill,
+            });
+        }
+        about.AddChild(new Label
+        {
+            Text = "Valence draws a codebase as chemistry: projects are molecules, systems are atoms, " +
+                   "classes are nucleons and dependencies are bonds.\n\n" +
+                   "It only reads the folder you point it at. Nothing is built, run or written there.",
+            AutowrapMode = TextServer.AutowrapMode.WordSmart,
+            HorizontalAlignment = HorizontalAlignment.Center,
+        });
+        _aboutDialog.AddChild(about);
         AddChild(_aboutDialog);
     }
+
+    private const string LogoPath = "res://images/logo.png";
 
     // ---------------------------------------------------------------- menu handling
 
