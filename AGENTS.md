@@ -177,6 +177,8 @@ valence/                 the Godot 4.7 (.NET, C#) viewer
   Scripts/*Panel.cs, ProgressOverlay.cs, PanelResizer.cs, RangeSlider.cs   UI pieces
   Scripts/GraphModel.cs  the loaded graph, indexed for the viewer
   Scripts/FlowSimulator.cs, SimulationView.cs   static simulation
+  Scripts/FlowChart.cs, FlowChartView.cs, FlowDrawer.cs   the simulation as a flow chart (layout,
+                         drawing with live highlight, the drawer and SVG/PNG/Mermaid export)
   Scripts/Layout.cs, DependencyLayers.cs, AtomView.cs, NucleonRenderer.cs, BondRenderer.cs,
           DetailLines.cs, LabelLayer.cs, LabelProximity.cs, FocusView.cs, OrbitCamera.cs   3D view
   Scripts/Palette.cs     every color; Storage.cs: user:// persistence; Comparison.cs: compare +

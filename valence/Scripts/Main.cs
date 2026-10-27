@@ -136,6 +136,12 @@ public partial class Main : Node3D
     // Hide Unrelated (toolbar, shown while something is selected): hide everything the selection
     // doesn't link to. Kept between selections; it does nothing without one.
     private bool _hideUnrelated;
+
+    // The flow chart of the latest simulation (kept after it stops, for exporting), and the user's
+    // Group by class choice (null = decide by size).
+    private FlowPlan? _chartPlan;
+    private FlowGraph? _chartGraph;
+    private bool? _chartGrouping;
     private Vector2 _pressPosition;
     private AtomData? _dragAtom;
     private Vector3 _dragOffset;
@@ -161,6 +167,7 @@ public partial class Main : Node3D
         _hud.Gizmo.Camera = _camera;
         WireHud();
         ApplyFullscreen(_settings.Fullscreen, save: false);
+        _hud.SetFlowChart(_settings.ShowFlowChart, false);
         _hud.SetRecent(_settings.RecentFolders);
         _quietFade = Mathf.Clamp(_settings.QuietFade, 0.02f, 0.9f);
         _hud.SetQuietFade(_quietFade);
@@ -200,6 +207,7 @@ public partial class Main : Node3D
 
         if (_simulation is { Active: true })
         {
+            UpdateFlowPlayhead();
             if (_simulation.Playing)
             {
                 foreach (var node in _heat.Keys.ToList()) _heat[node] = Mathf.Max(0.12f, _heat[node] - (float)delta * 0.6f);
@@ -227,6 +235,18 @@ public partial class Main : Node3D
         _hud.ReanalyzeRequested += Reanalyze;
         _hud.QuitRequested += () => GetTree().Quit();
         _hud.ToolChanged += tool => _tool = tool;
+        _hud.FlowChartToggled += SetFlowChartShown;
+        _hud.Flow.CloseRequested += () => SetFlowChartShown(false);
+        _hud.Flow.GroupingChanged += group =>
+        {
+            _chartGrouping = group;
+            RebuildFlowChart();
+        };
+        _hud.Flow.Status += message => _hud.SetStatus(message);
+        _hud.Flow.View.BoxChosen += box =>
+        {
+            if (box.Owner != null) SelectNode(box.Owner);
+        };
         _hud.HideUnrelatedChanged += on =>
         {
             _hideUnrelated = on;
@@ -371,6 +391,10 @@ public partial class Main : Node3D
         ClearSelection();
         _comparison = null;
         _comparisonPath = null;
+        _chartPlan = null;
+        _chartGraph = null;
+        _hud.Flow.ShowChart(null);
+        _hud.SetFlowChart(_settings.ShowFlowChart, false);
         _timeline = null;
         _timelinePresent = null;
         _timelinePlaying = false;
@@ -752,6 +776,7 @@ public partial class Main : Node3D
         _simTick = 1;
         _simFinished = false;
         _simulation.Play(graph, plan, keepTrace: false);
+        ShowFlowChart(graph, plan);
         ApplyVisibility(); // ghosts/hides untouched classes per Simulate ▸ Untouched; also labels + colors
         _hud.SetSimulationState(true, true);
         _hud.ShowInfo(InfoText.ForSimulation(plan, _simTick, loop, _visits, _model));
@@ -859,7 +884,44 @@ public partial class Main : Node3D
         _simLoop = false;
         _simFinished = false;
         _hud.SetSimulationState(false, false);
+        _hud.Flow.SetPlayhead(null, 1); // the chart stays (for export), drawn as fully reached
         ApplyVisibility(); // brings back anything "untouched" was hiding; also labels + colors
+    }
+
+    // ---------------------------------------------------------------- flow chart
+
+    private void ShowFlowChart(FlowGraph graph, FlowPlan plan)
+    {
+        _chartGraph = graph;
+        _chartPlan = plan;
+        RebuildFlowChart();
+        _hud.SetFlowChart(_settings.ShowFlowChart, _settings.ShowFlowChart);
+    }
+
+    private void RebuildFlowChart()
+    {
+        if (_model == null || _chartGraph == null || _chartPlan == null) return;
+        _hud.Flow.ShowChart(FlowChart.Build(_chartPlan, _chartGraph, _model, _chartGrouping));
+        UpdateFlowPlayhead();
+    }
+
+    /// <summary>The chart lights up in step with the 3D simulation (all lit once it's finished).</summary>
+    private void UpdateFlowPlayhead()
+    {
+        if (!_hud.FlowChartVisible) return;
+        var playing = _simulation is { Active: true } && !_simFinished;
+        _hud.Flow.SetPlayhead(playing ? _simulation!.Time : null, _simTick);
+    }
+
+    /// <summary>Simulate ▸ Flow Chart / the drawer's ✕. Remembered between runs.</summary>
+    private void SetFlowChartShown(bool on)
+    {
+        _settings.ShowFlowChart = on;
+        _settings.Save();
+        var hasChart = _hud.Flow.View.Chart != null;
+        _hud.SetFlowChart(on, on && hasChart);
+        if (on && !hasChart) _hud.SetStatus("Start a simulation (Simulate menu, or ▶ on a method) to see its flow chart.");
+        if (on) UpdateFlowPlayhead();
     }
 
     private void ShowSummary()

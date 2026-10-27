@@ -238,6 +238,9 @@ public sealed class ViewerSettings
     public float OutlineWidth { get; set; } = 300f;
     public float RightWidth { get; set; } = 400f;
 
+    /// <summary>Simulate ▸ Flow Chart: show the drawer whenever a simulation has a chart.</summary>
+    public bool ShowFlowChart { get; set; } = true;
+
     /// <summary>View ▸ Full Screen: exclusive full screen (the default), else a maximized window.</summary>
     public bool Fullscreen { get; set; } = true;
 

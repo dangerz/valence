@@ -81,6 +81,11 @@ this: only classes the flow has reached are labeled.
   **File ▸ Snapshots…** lists a repo's snapshots to compare, rename or delete (moved to the trash).
 * **G**: play the **game loop**: every `_Process` / `_PhysicsProcess` / `_Draw`, tick after tick.
 * **Simulate ▸ Play Trigger**: startup, input, event handlers, web requests…
+* **Flow chart**: a drawer under the 3D view shows the simulation as a flow chart (one box per
+  method, or per class for big flows), left to right by hop, in the order things happen. Boxes light
+  up gold as the flow reaches them; click one to select its class; scroll to zoom, drag to pan.
+  **Export** saves it as SVG, PNG or Mermaid, or copies the Mermaid for a markdown file.
+  Simulate ▸ Flow Chart turns the drawer on or off; drag the gap above it to resize it.
 * Space pauses/resumes, Simulate ▸ Speed changes pace, Esc stops. Classes heat up as the flow
   passes through them; the inspector lists the busiest. Calls through interfaces/virtuals and
   event wiring show as smaller "likely" pulses.

@@ -26,6 +26,9 @@ public partial class SimulationView : Node3D
     private float _traceCooldown;
 
     public bool Active => _plan != null;
+
+    /// <summary>Seconds into the current run of the plan (the flow chart follows it).</summary>
+    public float Time => _time;
     public bool Playing { get; private set; }
     public float Speed { get; set; } = 1f;
 

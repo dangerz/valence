@@ -101,6 +101,7 @@ public partial class Hud : Control
     private const int SimPause = 86;
     private const int SimStop = 87;
     private const int SimData = 88;
+    private const int SimFlowChart = 89;
     private const int TriggerBase = 100;
     private const int RecentBase = 1000;
 
@@ -138,6 +139,7 @@ public partial class Hud : Control
     private PanelContainer? _timelineGutter;
     private PopupMenu? _filtersMenu;
     private CheckBox? _hideUnrelated;
+    private VBoxContainer? _flowSection;
     private readonly Dictionary<ColorMode, Button> _tabs = new();
     private VBoxContainer? _summary;
     private Label? _summaryName;
@@ -181,6 +183,14 @@ public partial class Hud : Control
     private const float MinPanelWidth = 180f;
     private const float MaxPanelWidth = 900f;
     public ProgressOverlay Progress { get; } = new();
+
+    /// <summary>The flow chart drawer under the 3D view; Main fills it and handles its events.</summary>
+    public FlowDrawer Flow { get; } = new();
+
+    /// <summary>Simulate ▸ Flow Chart toggled.</summary>
+    public event Action<bool>? FlowChartToggled;
+
+    public bool FlowChartVisible => _flowSection?.Visible ?? false;
 
     /// <summary>X/Y/Z in the 3D view's corner; Main gives it the camera.</summary>
     public AxisGizmo Gizmo { get; } = new();
@@ -301,6 +311,7 @@ public partial class Hud : Control
         middle.AddChild(center);
         center.AddChild(BuildToolbar());
         center.AddChild(BuildViewport(showLegend));
+        center.AddChild(BuildFlowSection());
         _filterGutter = UiKit.Gutter(BuildFilterBar(), 0f, 8f, 0f, 0f);
         _filterGutter.Visible = false;
         center.AddChild(_filterGutter);
@@ -520,6 +531,30 @@ public partial class Hud : Control
 
     /// <summary>Stop Comparing and Only Show Differences only make sense while comparing.</summary>
     public void SetFullscreen(bool on) => SetChecked(_viewMenu, ViewFullscreen, on);
+
+    /// <param name="enabled">Simulate ▸ Flow Chart is on (the drawer shows whenever there's a chart).</param>
+    /// <param name="visible">The drawer itself is showing.</param>
+    public void SetFlowChart(bool enabled, bool visible)
+    {
+        SetChecked(_simulateMenu, SimFlowChart, enabled);
+        if (_flowSection != null) _flowSection.Visible = visible;
+    }
+
+    /// <summary>The flow chart drawer, with a gap above it that's dragged to resize it.</summary>
+    private Control BuildFlowSection()
+    {
+        _flowSection = new VBoxContainer { Visible = false, MouseFilter = MouseFilterEnum.Ignore };
+        _flowSection.AddThemeConstantOverride("separation", 0);
+        var resizer = new PanelResizer { Vertical = true, TooltipText = "Drag to resize the flow chart" };
+        resizer.Dragged += dy => Flow.View.CustomMinimumSize =
+            new Vector2(0f, Mathf.Clamp(Flow.View.CustomMinimumSize.Y - dy, 140f, 900f));
+        resizer.MouseEntered += () => PointerEnteredUi?.Invoke();
+        _flowSection.AddChild(resizer);
+        Flow.Build();
+        Flow.MouseEntered += () => PointerEnteredUi?.Invoke();
+        _flowSection.AddChild(Flow);
+        return _flowSection;
+    }
 
     /// <summary>Hide Unrelated is only offered while a class or system is selected.</summary>
     public void SetHasSelection(bool selected)
@@ -936,6 +971,8 @@ public partial class Hud : Control
         _untouchedMenu.AddRadioCheckItem("Hide (only draw what the flow has reached)", (int)UntouchedMode.Hide);
         _untouchedMenu.IdPressed += id => UntouchedModeChanged?.Invoke((UntouchedMode)(int)id);
         _simulateMenu.AddSubmenuNodeItem("Untouched (H)", _untouchedMenu);
+        _simulateMenu.AddSeparator();
+        _simulateMenu.AddCheckItem("Flow Chart", SimFlowChart);
         _simulateMenu.IdPressed += id => OnMenu((int)id);
         menus.AddChild(_simulateMenu);
 
@@ -1483,6 +1520,9 @@ public partial class Hud : Control
                 break;
             case ViewFullscreen:
                 FullscreenToggled?.Invoke();
+                break;
+            case SimFlowChart:
+                FlowChartToggled?.Invoke(!IsChecked(_simulateMenu, SimFlowChart));
                 break;
             case ViewOnlyDifferences:
             {
