@@ -876,19 +876,26 @@ public partial class Main : Node3D
             return;
         }
 
-        var selectionActive = _selectedNode != null || _focusAtom != null;
+        // Pinned (always-visible) labels are kept to a minimum: the selected class and the classes it
+        // connects to directly, or just the hovered class. Everything else only shows near the mouse.
+        var selectionActive = _selectedNode != null;
         var pinned = new HashSet<NodeData>();
-        if (_anchor != null) pinned.UnionWith(_lit);
-        _labels.SetPinned(pinned, _anchor, _selectedNode != null);
-
-        var pinnedAtoms = new HashSet<AtomData>(pinned.Select(n => n.Atom));
-        if (_focusAtom != null)
+        if (_selectedNode != null)
         {
-            pinnedAtoms.Add(_focusAtom);
-            if (_selectedNode == null) pinnedAtoms.UnionWith(_focusAtom.Neighbors);
+            pinned.Add(_selectedNode);
+            pinned.UnionWith(_model.Neighbors(_selectedNode, _enabledKinds));
         }
+        else if (_hoverNode != null)
+        {
+            pinned.Add(_hoverNode);
+        }
+        _labels.SetPinned(pinned, _anchor, selectionActive);
+
+        var pinnedAtoms = new HashSet<AtomData>();
+        if (_selectedNode != null) pinnedAtoms.UnionWith(pinned.Select(n => n.Atom));
+        if (_focusAtom != null) pinnedAtoms.Add(_focusAtom);
         foreach (var atom in _model.AtomList) atom.View?.SetLabelPinned(pinnedAtoms.Contains(atom), selectionActive);
-        _focusView?.SetPinnedAtoms(pinnedAtoms, _selectedNode != null);
+        _focusView?.SetPinnedAtoms(pinnedAtoms, selectionActive);
     }
 
     // ---------------------------------------------------------------- opening an atom
