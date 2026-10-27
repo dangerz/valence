@@ -43,6 +43,7 @@ public partial class FocusView : Node3D
     private float _fade;
     private float _zoomRange = 14f;
     private bool _exclusive;
+    private LabelMode _mode = LabelMode.NearMouse;
 
     public IReadOnlyList<PortData> Ports => _ports;
 
@@ -128,11 +129,13 @@ public partial class FocusView : Node3D
     }
 
     /// <summary>Systems connected to the selection keep their port labels; with a selection, others hide.</summary>
-    public void SetPinnedAtoms(IEnumerable<AtomData> atoms, bool exclusive)
+    /// <param name="mode">View ▸ Labels; Main passes OnClick during simulation so only pinned ports show.</param>
+    public void SetPinnedAtoms(IEnumerable<AtomData> atoms, bool exclusive, LabelMode mode = LabelMode.NearMouse)
     {
         _pinned.Clear();
         _pinned.UnionWith(atoms);
         _exclusive = exclusive;
+        _mode = mode;
         ApplyLabels();
     }
 
@@ -146,9 +149,11 @@ public partial class FocusView : Node3D
             if (port.Mesh != null) port.Mesh.Visible = _fade > 0.01f && !port.Other.IsHidden;
             if (port.Label == null) continue;
             var pinned = _pinned.Contains(port.Other);
-            port.BaseAlpha = (pinned || !_exclusive ? _fade : 0f) * port.Other.Opacity;
-            port.NearMouse = !pinned && !_exclusive; // unpinned port labels only show near the mouse
-            port.Label.VisibilityRangeEnd = pinned ? 0f : _zoomRange;
+            var all = _mode == LabelMode.All;
+            var shown = pinned || all || (!_exclusive && _mode == LabelMode.NearMouse);
+            port.BaseAlpha = (shown ? _fade : 0f) * port.Other.Opacity;
+            port.NearMouse = !pinned && !_exclusive && _mode == LabelMode.NearMouse;
+            port.Label.VisibilityRangeEnd = pinned || all ? 0f : _zoomRange;
             SetPortAlpha(port);
         }
     }

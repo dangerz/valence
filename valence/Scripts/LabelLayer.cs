@@ -22,6 +22,7 @@ public partial class LabelLayer : Node3D
     private NodeData? _anchor;
     private bool _exclusive;
     private bool _simulation;
+    private LabelMode _mode = LabelMode.NearMouse;
     private float _openFade = 1f;
     private float _zoomRange = 14f;
 
@@ -55,6 +56,13 @@ public partial class LabelLayer : Node3D
         _anchor = anchor;
         _exclusive = exclusive;
         Sync();
+    }
+
+    /// <summary>View ▸ Labels (ignored during simulation).</summary>
+    public void SetMode(LabelMode mode)
+    {
+        _mode = mode;
+        foreach (var (node, label) in _labels) Apply(node, label);
     }
 
     /// <summary>Entering or leaving simulation. Entering hides every label until <see cref="Reveal"/>.</summary>
@@ -138,9 +146,14 @@ public partial class LabelLayer : Node3D
             label.VisibilityRangeEnd = 0f; // always visible
             alpha = _opened.Contains(node) ? _openFade : 1f;
         }
-        else if (_exclusive)
+        else if (_mode == LabelMode.OnClick || (_exclusive && _mode != LabelMode.All))
         {
-            alpha = 0f;
+            alpha = 0f; // only clicked things are labeled / a selection hides the rest
+        }
+        else if (_mode == LabelMode.All)
+        {
+            label.VisibilityRangeEnd = 0f;
+            alpha = _openFade;
         }
         else
         {
@@ -149,8 +162,8 @@ public partial class LabelLayer : Node3D
         }
         alpha *= node.Opacity; // hidden → no label; quiet → faded
 
-        // Unpinned labels outside simulation only show near the mouse; _Process keeps them updated.
-        var nearMouse = !_simulation && !_pinned.Contains(node) && !_exclusive;
+        // Near Mouse: unpinned labels only show near the pointer; _Process keeps them updated.
+        var nearMouse = !_simulation && !_pinned.Contains(node) && !_exclusive && _mode == LabelMode.NearMouse;
         _baseColor[node] = new Color(color.R, color.G, color.B, alpha);
         if (nearMouse) _nearMouse.Add(node);
         else _nearMouse.Remove(node);

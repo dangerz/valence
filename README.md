@@ -58,6 +58,9 @@ them in source order, event and signal wiring, and entry points (Godot `_Process
 
 Side panels can be resized by dragging their borders; widths are remembered.
 **View ▸ Brightness** turns the atom clouds, bonds, electrons and bloom up or down.
+**View ▸ Labels** (or **L**): *All* shows every label, *Near Mouse* (default) only around the
+pointer, *On Click* only the selected class and opened system. A running simulation overrides
+this: only classes the flow has reached are labeled.
 
 ### History
 

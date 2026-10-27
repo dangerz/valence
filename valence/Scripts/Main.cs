@@ -68,6 +68,7 @@ public partial class Main : Node3D
     private UntouchedMode _untouched = UntouchedMode.Show;
     private HashSet<string> _favorites = new(StringComparer.Ordinal);
     private Godot.Environment? _environment;
+    private LabelMode _labelMode = LabelMode.NearMouse;
     private float _brightness = 0.75f;
 
     // Snapshot comparison (View ▸ Compare With): added/changed classes vs a saved snapshot.
@@ -136,6 +137,8 @@ public partial class Main : Node3D
         _hud.SetUntouchedMode(_untouched);
         ApplyBrightness(Mathf.Clamp(_settings.Brightness, 0.1f, 2f));
         _hud.SetBrightness(_brightness);
+        _labelMode = _settings.Labels;
+        _hud.SetLabelMode(_labelMode);
 
         var startup = StartupGraph();
         GD.Print($"[valence] viewer ready; loading {startup}");
@@ -256,6 +259,7 @@ public partial class Main : Node3D
             _settings.Brightness = brightness;
             _settings.Save();
         };
+        _hud.LabelModeChanged += SetLabelMode;
         _hud.SnapshotRequested += TakeSnapshot;
         _hud.CompareRequested += StartCompare;
         _hud.StopCompareRequested += StopCompare;
@@ -1119,24 +1123,49 @@ public partial class Main : Node3D
 
         // Pinned (always-visible) labels are kept to a minimum: the selected class and the classes it
         // connects to directly, or just the hovered class. Everything else only shows near the mouse.
+        // On Click: only what was clicked (the selected class, the opened system) is labeled.
+        var onClick = _labelMode == LabelMode.OnClick;
         var selectionActive = _selectedNode != null;
         var pinned = new HashSet<NodeData>();
         if (_selectedNode != null)
         {
             pinned.Add(_selectedNode);
-            pinned.UnionWith(_model.Neighbors(_selectedNode, _enabledKinds));
+            if (!onClick) pinned.UnionWith(_model.Neighbors(_selectedNode, _enabledKinds));
         }
-        else if (_hoverNode != null)
+        else if (_hoverNode != null && !onClick)
         {
             pinned.Add(_hoverNode);
         }
+        _labels.SetMode(_labelMode);
         _labels.SetPinned(pinned, _anchor, selectionActive);
 
         var pinnedAtoms = new HashSet<AtomData>();
         if (_selectedNode != null) pinnedAtoms.UnionWith(pinned.Select(n => n.Atom));
         if (_focusAtom != null) pinnedAtoms.Add(_focusAtom);
-        foreach (var atom in _model.AtomList) atom.View?.SetLabelPinned(pinnedAtoms.Contains(atom), selectionActive);
-        _focusView?.SetPinnedAtoms(pinnedAtoms, selectionActive);
+        foreach (var atom in _model.AtomList) atom.View?.SetLabelPinned(pinnedAtoms.Contains(atom), selectionActive, _labelMode);
+        _focusView?.SetPinnedAtoms(pinnedAtoms, selectionActive, _labelMode);
+        foreach (var molecule in _model.Molecules)
+        {
+            if (molecule.Label != null) molecule.Label.Visible = !onClick && molecule.Opacity > 0f;
+        }
+    }
+
+    private void SetLabelMode(LabelMode mode)
+    {
+        _labelMode = mode;
+        _hud.SetLabelMode(mode);
+        _settings.Labels = mode;
+        _settings.Save();
+        ApplyLabels();
+        var name = mode switch
+        {
+            LabelMode.All => "all",
+            LabelMode.OnClick => "on click only",
+            _ => "near the mouse",
+        };
+        _hud.SetStatus(_simulation is { Active: true }
+            ? $"Labels: {name} (after the simulation; while it runs, only reached classes are labeled)"
+            : $"Labels: {name}");
     }
 
     // ---------------------------------------------------------------- opening an atom
@@ -1563,6 +1592,14 @@ public partial class Main : Node3D
                 break;
             case Key.Space:
                 TogglePause();
+                break;
+            case Key.L when !command:
+                SetLabelMode(_labelMode switch
+                {
+                    LabelMode.All => LabelMode.NearMouse,
+                    LabelMode.NearMouse => LabelMode.OnClick,
+                    _ => LabelMode.All,
+                });
                 break;
             case Key.H when !command:
                 SetUntouchedMode(_untouched switch

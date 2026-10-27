@@ -94,6 +94,19 @@ public enum Visibility
     Hidden = 2,
 }
 
+/// <summary>View ▸ Labels (outside simulation, which always labels only what the flow reached).</summary>
+public enum LabelMode
+{
+    /// <summary>Every label, no zoom or mouse limits.</summary>
+    All = 0,
+
+    /// <summary>Unpinned labels only near the mouse pointer.</summary>
+    NearMouse = 1,
+
+    /// <summary>Only what was clicked: the selected class and the opened system.</summary>
+    OnClick = 2,
+}
+
 /// <summary>During a simulation: what to do with classes and systems the flow hasn't reached.</summary>
 public enum UntouchedMode
 {
@@ -216,6 +229,7 @@ public sealed class ViewerSettings
     public float QuietFade { get; set; } = 0.15f;
 
     public UntouchedMode Untouched { get; set; } = UntouchedMode.Show;
+    public LabelMode Labels { get; set; } = LabelMode.NearMouse;
 
     /// <summary>View ▸ Brightness, 0.25..1.25.</summary>
     public float Brightness { get; set; } = 0.75f;

@@ -92,6 +92,7 @@ public partial class Hud : Control
     private PanelResizer? _rightResizer;
     private PopupMenu? _untouchedMenu;
     private PopupMenu? _brightnessMenu;
+    private PopupMenu? _labelsMenu;
     private PopupMenu? _compareMenu;
     private readonly List<string> _snapshotPaths = new();
     private PanelContainer? _timelineBar;
@@ -126,6 +127,7 @@ public partial class Hud : Control
     public event Action? ShowAllRequested;
     public event Action<UntouchedMode>? UntouchedModeChanged;
     public event Action<float>? BrightnessChanged;
+    public event Action<LabelMode>? LabelModeChanged;
     public event Action? SnapshotRequested;
     public event Action<string>? CompareRequested;
     public event Action? StopCompareRequested;
@@ -299,6 +301,15 @@ public partial class Hud : Control
         if (_simulateMenu == null) return;
         var index = _simulateMenu.GetItemIndex(SimPause);
         if (index >= 0) _simulateMenu.SetItemText(index, active && !playing ? "Resume" : "Pause");
+    }
+
+    public void SetLabelMode(LabelMode mode)
+    {
+        if (_labelsMenu == null) return;
+        foreach (var each in new[] { LabelMode.All, LabelMode.NearMouse, LabelMode.OnClick })
+        {
+            SetChecked(_labelsMenu, (int)each, each == mode);
+        }
     }
 
     public void SetBrightness(float brightness)
@@ -574,6 +585,12 @@ public partial class Hud : Control
         };
         _viewMenu.AddSubmenuNodeItem("Quiet Fade", _fadeMenu);
         _viewMenu.AddItem("Show Everything (clear hide/quiet)", ViewShowAll);
+        _labelsMenu = new PopupMenu { Name = "Labels" };
+        _labelsMenu.AddRadioCheckItem("All", (int)LabelMode.All);
+        _labelsMenu.AddRadioCheckItem("Near Mouse", (int)LabelMode.NearMouse);
+        _labelsMenu.AddRadioCheckItem("On Click", (int)LabelMode.OnClick);
+        _labelsMenu.IdPressed += id => LabelModeChanged?.Invoke((LabelMode)(int)id);
+        _viewMenu.AddSubmenuNodeItem("Labels (L)", _labelsMenu);
         _brightnessMenu = new PopupMenu { Name = "Brightness" };
         for (var i = 0; i < Brightnesses.Length; i++) _brightnessMenu.AddRadioCheckItem($"{Brightnesses[i] * 100:0}%", i);
         _brightnessMenu.IdPressed += id =>
@@ -804,6 +821,7 @@ public partial class Hud : Control
                 "Click a port — jump to that system\n" +
                 "Shift-drag a system — move it (saved per repo; View ▸ Reset Layout undoes)\n" +
                 "F — frame everything · Esc — back out one level · ⌘F — find\n" +
+                "L — labels: all / near mouse / on click (View ▸ Labels)\n" +
                 "⌘O — open a source folder · ⌘R — re-analyze\n\n" +
                 "Simulate (static: nothing is run)\n" +
                 "D / U — flow downstream from / upstream into the selected class\n" +

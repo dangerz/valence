@@ -145,13 +145,15 @@ public partial class AtomView : Node3D
 
     /// <param name="pinned">Always show the name (focused, connected to the selection, simulated).</param>
     /// <param name="exclusive">A selection is active: hide names that aren't pinned.</param>
-    public void SetLabelPinned(bool pinned, bool exclusive)
+    /// <param name="mode">View ▸ Labels; Main passes OnClick during simulation so only pinned names show.</param>
+    public void SetLabelPinned(bool pinned, bool exclusive, LabelMode mode = LabelMode.NearMouse)
     {
         if (_label == null) return;
-        _label.VisibilityRangeEnd = pinned ? 0f : _labelRange;
-        _label.Visible = pinned || !exclusive;
-        // Unpinned names only show near the mouse (exclusive mode hides them outright).
-        _labelNearMouse = !pinned && !exclusive;
+        var all = mode == LabelMode.All;
+        _label.VisibilityRangeEnd = pinned || all ? 0f : _labelRange;
+        _label.Visible = pinned || all || (!exclusive && mode == LabelMode.NearMouse);
+        // Near Mouse: unpinned names only show near the pointer.
+        _labelNearMouse = !pinned && !exclusive && mode == LabelMode.NearMouse;
         ApplyLabelAlpha(_labelNearMouse && IsInsideTree() ? LabelProximity.Factor(GetViewport(), _label.GlobalPosition) : 1f);
     }
 
