@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Valence.Core;
 using Valence.Probe.CSharp;
+using Valence.Probe.Python;
 using Valence.Schema;
 
 // valence — runs language probes over a repo (read-only) and writes a merged graph for the viewer.
@@ -66,9 +67,9 @@ var options = new AnalyzeOptions
     ChurnDays = churnDays,
     ExternalProbeTimeout = TimeSpan.FromMinutes(timeoutMinutes),
 };
-// C# is built in; other languages come from probe.json manifests (--probes, $VALENCE_PROBES, probes/).
+// C# and Python are built in; other languages come from probe.json manifests (--probes, $VALENCE_PROBES, probes/).
 var probes = RepoAnalyzer.Combine(
-    new IProbe[] { new CSharpProbe() },
+    new IProbe[] { new CSharpProbe(), new PythonProbe() },
     ProbeRegistry.Discover(ProbeRegistry.SearchPaths(probeDirs), Log),
     options);
 

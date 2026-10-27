@@ -17,6 +17,8 @@
     <ProjectReference Include="../Valence.Core/Valence.Core.csproj" />
     <!-- Built-in C# probe (runs in-process). -->
     <ProjectReference Include="../../probes/csharp/Valence.Probe.CSharp.csproj" />
+    <!-- Built-in Python probe (tree-sitter, in-process). -->
+    <ProjectReference Include="../../probes/python/Valence.Probe.Python.csproj" />
   </ItemGroup>
 
 </Project>

@@ -69,6 +69,7 @@ public static class Palette
         [NodeKinds.Record] = Hex(0x38d9a9),
         [NodeKinds.RecordStruct] = Hex(0x38d9a9),
         [NodeKinds.Delegate] = Hex(0xff922b),
+        [NodeKinds.Module] = Hex(0xa9e34b),
     };
 
     public static Color EdgeKind(string kind) =>

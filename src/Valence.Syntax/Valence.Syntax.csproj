@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Not "Valence.TreeSitter": that would shadow the bindings' TreeSitter namespace inside Valence.*. -->
+    <RootNamespace>Valence.Syntax</RootNamespace>
+    <Version>0.1.0</Version>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Bindings plus the native tree-sitter and grammar libraries (runtimes/<rid>/native, win/linux/osx). -->
+    <PackageReference Include="TreeSitter.DotNet" Version="1.3.0" />
+  </ItemGroup>
+
+</Project>

@@ -15,6 +15,8 @@
     <!-- Analysis runs in-process: "Open source folder…" needs no separately built CLI. -->
     <ProjectReference Include="../src/Valence.Core/Valence.Core.csproj" />
     <ProjectReference Include="../probes/csharp/Valence.Probe.CSharp.csproj" />
+    <!-- Python, parsed in-process with tree-sitter (native libraries come with the TreeSitter.DotNet package). -->
+    <ProjectReference Include="../probes/python/Valence.Probe.Python.csproj" />
   </ItemGroup>
 
 </Project>

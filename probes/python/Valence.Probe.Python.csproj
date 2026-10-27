@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Valence.Probe.Python</RootNamespace>
+    <AssemblyName>Valence.Probe.Python</AssemblyName>
+    <Version>0.0.1</Version>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Valence.Schema/Valence.Schema.csproj" />
+    <ProjectReference Include="../../src/Valence.Core/Valence.Core.csproj" />
+    <!-- tree-sitter engine (bindings + native grammars), shared by future languages. -->
+    <ProjectReference Include="../../src/Valence.Syntax/Valence.Syntax.csproj" />
+  </ItemGroup>
+
+</Project>

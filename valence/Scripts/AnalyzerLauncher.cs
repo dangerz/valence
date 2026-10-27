@@ -5,12 +5,13 @@ using System.Linq;
 using Godot;
 using Valence.Core;
 using Valence.Probe.CSharp;
+using Valence.Probe.Python;
 using Valence.Schema;
 
 namespace Valence.Viewer;
 
 /// <summary>
-/// Analyzes a source folder in-process (built-in C# probe + any external probes found) and
+/// Analyzes a source folder in-process (built-in C# and Python probes + any external probes found) and
 /// writes the graph to ~/.valence/graphs. The source folder itself is only read.
 /// </summary>
 public static class AnalyzerLauncher
@@ -32,7 +33,7 @@ public static class AnalyzerLauncher
 
         var options = new AnalyzeOptions();
         var external = ProbeRegistry.Discover(ProbeRegistry.SearchPaths(ExtraProbeDirs()), context.Log);
-        var probes = RepoAnalyzer.Combine(new IProbe[] { new CSharpProbe() }, external, options);
+        var probes = RepoAnalyzer.Combine(BuiltInProbes(), external, options);
 
         var graph = RepoAnalyzer.Analyze(sourceFolder, probes, options, context);
         var outPath = RepoAnalyzer.DefaultOutputPath(graph.Repo.Root);
@@ -49,13 +50,16 @@ public static class AnalyzerLauncher
     {
         var options = new AnalyzeOptions();
         var external = ProbeRegistry.Discover(ProbeRegistry.SearchPaths(ExtraProbeDirs()), context.Log);
-        var probes = RepoAnalyzer.Combine(new IProbe[] { new CSharpProbe() }, external, options);
+        var probes = RepoAnalyzer.Combine(BuiltInProbes(), external, options);
         var timeline = TimelineBuilder.Build(sourceFolder, probes, samples, context);
         var path = TimelineBuilder.DefaultPath(timeline.Root);
         ValenceJson.Write(path, timeline);
         context.Log($"saved {path}");
         return path;
     }
+
+    /// <summary>Languages analyzed in-process (no separately built tools or language runtimes needed).</summary>
+    private static IProbe[] BuiltInProbes() => new IProbe[] { new CSharpProbe(), new PythonProbe() };
 
     /// <summary>Probes published by build.sh, if any (other languages later).</summary>
     private static IEnumerable<string> ExtraProbeDirs()
