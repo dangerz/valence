@@ -2,7 +2,7 @@
 
 This file is for AI coding agents (and the people driving them) who want to contribute to Valence.
 Read all of it before changing anything. It covers what Valence is for, the rules that don't bend,
-how the code is laid out, how the existing work was done, and a step-by-step playbook for adding a
+what to install and how to run it, how the code is laid out, how the existing work was done, and a step-by-step playbook for adding a
 language (PHP is next; the playbook uses it as the worked example).
 
 If anything here disagrees with what your maintainer tells you in chat, the maintainer wins.
@@ -54,14 +54,62 @@ These are product guarantees. A change that breaks one will be rejected, however
 
 ---
 
-## 3. How to work here (process)
+## 3. Setup: what to install and how to run it
+
+**Required**
+
+| What | Why |
+|---|---|
+| **Godot 4.7.2, .NET edition** (the "Godot Engine - .NET" download, not the standard one) | The viewer is C#. `valence/Valence.csproj` pins `Godot.NET.Sdk/4.7.2`, so use exactly 4.7.2. |
+| **.NET 8 SDK** (or newer that can target `net8.0`) | Every project targets `net8.0`; Godot uses the SDK to build the C#. |
+
+**Optional**
+
+| What | Why |
+|---|---|
+| **git** | Churn, the "changed recently" glow and the git timeline. Without it, analysis still works, just without history. |
+| **Python 3** | Only to regenerate the app icon (`python3 tools/make_icon.py images/logo.png valence/images/icon.png 1024 --mark-only`). |
+| An IDE with C# support (Rider, VS Code + C# Dev Kit, Visual Studio) | Opening `valence/Valence.sln` (viewer + everything it uses) or `Valence.Tools.sln` (CLI, core, probes). |
+
+**Not needed:** Python, PHP or any other runtime for the languages Valence analyzes; Roslyn and
+tree-sitter (with its native grammars for macOS, Windows and Linux) come in as NuGet packages
+(`Microsoft.CodeAnalysis.CSharp`, `TreeSitter.DotNet`) and are restored automatically on the first
+build. Nothing needs to be installed into the repos being analyzed.
+
+**Run the viewer**
+
+1. Open `valence/project.godot` in Godot 4.7.2 .NET. The first open imports assets and generates
+   `.uid`/`.import` files; the first run builds the C# solution (the NuGet restore needs network).
+2. Press Run (F5 / ⌘B). It opens the bundled demo graph (`valence/samples/demo.valence.json`).
+3. **File ▸ Open Source Folder…** (⌘O) and pick a cloned repo. It's analyzed in the background
+   with a progress dialog; the graph is saved to `~/.valence/graphs/<folder>.valence.json` and
+   reopens later via **File ▸ Open Graph…**.
+4. Progress and summary lines are printed with a `[valence]` prefix in Godot's Output panel. That
+   log is what the maintainer pastes back when testing a change.
+
+If Godot reports it can't find .NET, install the .NET 8 SDK and restart Godot.
+
+**Command line (optional)**
+
+```bash
+bash build.sh                                     # → dist/valence.dll (+ standalone dist/probes/csharp/)
+dotnet dist/valence.dll analyze ~/code/SomeRepo   # → ~/.valence/graphs/SomeRepo.valence.json
+```
+
+**Platforms:** developed and tested on macOS (Apple Silicon). The native tree-sitter libraries
+also ship for Windows (x86/x64/arm64) and Linux (x64/arm64); those platforms haven't been tried
+yet, so report what you find.
+
+---
+
+## 4. How to work here (process)
 
 Valence was built by an agent working with a maintainer under these rules. Follow them unless your
 maintainer says otherwise.
 
 - **The maintainer builds, runs and tests. You write code.** Don't run `dotnet build`, Godot, the
   CLI or tests unless your maintainer explicitly asks you to. Write code carefully enough that it
-  compiles first time (see section 7), then tell the maintainer exactly what to run and what they
+  compiles first time (see section 8), then tell the maintainer exactly what to run and what they
   should see.
 - **Commit and push only when asked.** Never on your own initiative.
 - **Stage files by name.** No `git add -A` / `git add .`. Include the files Godot generates for new
@@ -82,7 +130,7 @@ maintainer says otherwise.
 
 ---
 
-## 4. Repository map
+## 5. Repository map
 
 ```
 README.md                user-facing overview, controls, read-only guarantees
@@ -135,7 +183,7 @@ valence/                 the Godot 4.7 (.NET, C#) viewer
 
 ---
 
-## 5. Architecture
+## 6. Architecture
 
 ```
 repo folder ──read-only──▶ probes ──ProbeOutput──▶ GraphBuilder ──Graph──▶ viewer
@@ -169,7 +217,7 @@ in `user://`.
 
 ---
 
-## 6. The approach (how the existing work was done)
+## 7. The approach (how the existing work was done)
 
 - **Small, complete steps.** Each change is a coherent unit the maintainer can build and judge.
   Big features go in phases (structure → bonds → flow → framework packs → docs), each one
@@ -191,7 +239,7 @@ in `user://`.
 
 ---
 
-## 7. Writing C# that compiles first time (pitfalls we've hit)
+## 8. Writing C# that compiles first time (pitfalls we've hit)
 
 Code here is usually written without a compiler in the loop, so check these before handing over:
 
@@ -216,7 +264,7 @@ Code here is usually written without a compiler in the loop, so check these befo
 
 ---
 
-## 8. Adding a language (PHP as the worked example)
+## 9. Adding a language (PHP as the worked example)
 
 New languages are built-in, tree-sitter probes modelled on `probes/python/`. TreeSitter.DotNet
 already ships the PHP grammar: `TreeSitterRuntime.Load("PHP")` loads
@@ -293,7 +341,7 @@ commands; event subscribers. WordPress: `add_action`/`add_filter('hook', callbac
 
 ---
 
-## 9. Where things stand
+## 10. Where things stand
 
 - Done: viewer features listed in section 1, the C# probe, the tree-sitter engine, and Python
   (structure, bonds, member flow, entry points, Django/Flask/FastAPI/Celery/pygame packs). The

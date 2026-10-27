@@ -116,7 +116,10 @@ windows, sprites, Pygame Zero).
 
 ## Quick start
 
-Requirements: .NET 8 SDK, Godot 4.7 (.NET build).
+Requirements: **Godot 4.7.2, .NET edition** (not the standard build; the project pins
+`Godot.NET.Sdk/4.7.2`) and the **.NET 8 SDK**. Optional: git (history, glow, timeline). No runtimes
+are needed for the languages being analyzed; Roslyn and tree-sitter come in as NuGet packages on the
+first build. More detail for contributors in [AGENTS.md](AGENTS.md#3-setup-what-to-install-and-how-to-run-it).
 
 Open `valence/project.godot` in Godot and run it. It starts with a small demo graph. Click
 **Open source folder…** and pick a repo: it's analyzed in the background (read-only) and the
