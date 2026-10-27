@@ -83,8 +83,8 @@ public partial class Hud : Control
     private Label? _tooltipLabel;
     private FileDialog? _graphDialog;
     private FileDialog? _sourceDialog;
-    private AcceptDialog? _helpDialog;
-    private AcceptDialog? _aboutDialog;
+    private ModalDialog? _helpDialog;
+    private ModalDialog? _aboutDialog;
 
     public OutlinePanel Outline { get; } = new();
     public MethodsPanel Methods { get; } = new();
@@ -163,6 +163,8 @@ public partial class Hud : Control
     {
         SetAnchorsPreset(LayoutPreset.FullRect);
         MouseFilter = MouseFilterEnum.Ignore;
+        // Menus, popups and dialogs below inherit this.
+        Theme = ValenceTheme.Build();
 
         var root = new VBoxContainer { MouseFilter = MouseFilterEnum.Ignore };
         root.SetAnchorsPreset(LayoutPreset.FullRect);
@@ -603,7 +605,7 @@ public partial class Hud : Control
     public static PanelContainer MakePanel(float alpha = 0.88f)
     {
         var panel = new PanelContainer();
-        panel.AddThemeStyleboxOverride("panel", PanelStyle(alpha, 8));
+        panel.AddThemeStyleboxOverride("panel", PanelStyle(alpha, 8, 10f, 1, 1, 1, 1));
         return panel;
     }
 
@@ -612,7 +614,7 @@ public partial class Hud : Control
     private Control BuildMenuBar()
     {
         var bar = new PanelContainer();
-        bar.AddThemeStyleboxOverride("panel", PanelStyle(0.96f, 0, 4f));
+        bar.AddThemeStyleboxOverride("panel", PanelStyle(0.96f, 0, 4f, borderBottom: 2));
         bar.MouseEntered += () => PointerEnteredUi?.Invoke();
 
         var row = new HBoxContainer();
@@ -620,7 +622,7 @@ public partial class Hud : Control
         bar.AddChild(row);
 
         // Drawn in the window, not the macOS global menu (hidden in exclusive fullscreen).
-        var menus = new MenuBar { PreferGlobalMenu = false, Flat = true };
+        var menus = new MenuBar { PreferGlobalMenu = false };
         row.AddChild(menus);
 
         _fileMenu = new PopupMenu { Name = "File" };
@@ -839,7 +841,7 @@ public partial class Hud : Control
     private Control BuildStatusBar()
     {
         var bar = new PanelContainer();
-        bar.AddThemeStyleboxOverride("panel", PanelStyle(0.96f, 0, 4f));
+        bar.AddThemeStyleboxOverride("panel", PanelStyle(0.96f, 0, 4f, borderTop: 2));
         bar.MouseEntered += () => PointerEnteredUi?.Invoke();
 
         var row = new HBoxContainer();
@@ -865,7 +867,7 @@ public partial class Hud : Control
     private void BuildTooltip()
     {
         _tooltip = new PanelContainer { MouseFilter = MouseFilterEnum.Ignore, Visible = false, TopLevel = true, ZIndex = 10 };
-        _tooltip.AddThemeStyleboxOverride("panel", PanelStyle(0.95f, 6, 6f));
+        _tooltip.AddThemeStyleboxOverride("panel", PanelStyle(0.95f, 6, 6f, 1, 1, 1, 1));
         _tooltipLabel = new Label { MouseFilter = MouseFilterEnum.Ignore };
         _tooltipLabel.AddThemeFontSizeOverride("font_size", 13);
         _tooltip.AddChild(_tooltipLabel);
@@ -895,57 +897,94 @@ public partial class Hud : Control
         _sourceDialog.DirSelected += dir => SourceFolderChosen?.Invoke(dir);
         AddChild(_sourceDialog);
 
-        _helpDialog = new AcceptDialog
-        {
-            Title = "Controls",
-            DialogText =
-                "Drag — orbit the camera\n" +
-                "Right-drag or Shift+two-finger swipe — pan\n" +
-                "Scroll or pinch — zoom\n" +
-                "Click a system — open it: classes spread out, labels appear as you zoom in, ports lead to other systems\n" +
-                "Click a class (or find it with ⌘F) — select it: it and everything connected to it get labels\n" +
-                "    (View ▸ Link Depth for more hops); other labels hide\n" +
-                "Click a port — jump to that system\n" +
-                "Shift-drag a system — move it (saved per repo; View ▸ Reset Layout undoes)\n" +
-                "F — frame everything · Esc — back out one level · ⌘F — find\n" +
-                "L — labels: all / near mouse / on click (View ▸ Labels)\n" +
-                "⌘O — open a source folder · ⌘R — re-analyze\n\n" +
-                "Simulate (static: nothing is run)\n" +
-                "D / U — flow downstream from / upstream into the selected class\n" +
-                "G — play the game loop (every _Process/_PhysicsProcess, repeating)\n" +
-                "Simulate ▸ Play Trigger — startup, input, event handlers, requests…\n" +
-                "Space — pause/resume (or replay) · Esc — stop\n" +
-                "H — untouched classes: show / ghost / hide (only what the flow reaches is drawn)\n\n" +
-                "Drag a side panel's border to resize it.",
-        };
+        // Controls: key and mouse reference, in titled groups.
+        _helpDialog = new ModalDialog();
+        _helpDialog.Build("Controls", 680f);
+        AddHelpGroup(_helpDialog, "Camera",
+            ("Drag", "orbit"),
+            ("Right-drag · Shift+two-finger swipe", "pan"),
+            ("Scroll · pinch", "zoom"),
+            ("F", "frame everything"),
+            ("Esc", "back out one level"));
+        AddHelpGroup(_helpDialog, "Exploring",
+            ("Click a system", "open it: classes spread out, ports lead to other systems"),
+            ("Click a class · ⌘F", "select it and label everything connected (View ▸ Link Depth for more hops)"),
+            ("Click a port", "jump to that system"),
+            ("Shift-drag a system", "move it (saved per repo; View ▸ Reset Layout undoes)"),
+            ("L", "labels: all / near mouse / on click"),
+            ("⌘O · ⌘R", "open a source folder · re-analyze"));
+        AddHelpGroup(_helpDialog, "Simulate (static: nothing is run)",
+            ("D · U", "flow downstream from / upstream into the selected class"),
+            ("G", "play the game loop (every _Process/_PhysicsProcess, repeating)"),
+            ("Simulate ▸ Play Trigger", "startup, input, event handlers, requests…"),
+            ("Space", "pause, resume or replay"),
+            ("H", "untouched classes: show / ghost / hide"),
+            ("Esc", "stop"));
+        _helpDialog.AddText("Drag a side panel's border to resize it.", fontSize: 12)
+            .AddThemeColorOverride("font_color", Palette.MutedText);
         AddChild(_helpDialog);
 
-        // About: the logo above the description. AcceptDialog sizes custom children to its content area.
-        _aboutDialog = new AcceptDialog { Title = "About Valence", MinSize = new Vector2I(520, 560) };
-        var about = new VBoxContainer();
-        about.AddThemeConstantOverride("separation", 12);
+        // About: the logo above the description, at a fixed size.
+        _aboutDialog = new ModalDialog();
+        _aboutDialog.Build("About Valence", 480f);
         if (ResourceLoader.Exists(LogoPath))
         {
-            about.AddChild(new TextureRect
+            // The logo is dark on off-white; a light card keeps it readable on the dark dialog.
+            var card = new PanelContainer { SizeFlagsHorizontal = SizeFlags.ShrinkCenter };
+            card.AddThemeStyleboxOverride("panel", ValenceTheme.Box(LogoBackground, Palette.PanelBorder, 1, 10, 0f));
+            card.AddChild(new TextureRect
             {
                 Texture = GD.Load<Texture2D>(LogoPath),
                 ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
                 StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
-                CustomMinimumSize = new Vector2(0f, 320f),
-                SizeFlagsVertical = SizeFlags.ExpandFill,
+                CustomMinimumSize = new Vector2(220f, 220f),
             });
+            _aboutDialog.Body.AddChild(card);
         }
-        about.AddChild(new Label
-        {
-            Text = "Valence draws a codebase as chemistry: projects are molecules, systems are atoms, " +
-                   "classes are nucleons and dependencies are bonds.\n\n" +
-                   "It only reads the folder you point it at. Nothing is built, run or written there.",
-            AutowrapMode = TextServer.AutowrapMode.WordSmart,
-            HorizontalAlignment = HorizontalAlignment.Center,
-        });
-        _aboutDialog.AddChild(about);
+        _aboutDialog.AddText(
+            "Valence draws a codebase as chemistry: projects are molecules, systems are atoms, " +
+            "classes are nucleons and dependencies are bonds.",
+            HorizontalAlignment.Center);
+        _aboutDialog.AddText(
+                "It only reads the folder you point it at. Nothing is built, run or written there.",
+                HorizontalAlignment.Center, 13)
+            .AddThemeColorOverride("font_color", Palette.MutedText);
         AddChild(_aboutDialog);
     }
+
+    /// <summary>A titled group of "keys · action" rows in a two-column grid.</summary>
+    private static void AddHelpGroup(ModalDialog dialog, string title, params (string Keys, string Action)[] rows)
+    {
+        var heading = new Label { Text = title };
+        heading.AddThemeColorOverride("font_color", Palette.Accent);
+        dialog.Body.AddChild(heading);
+
+        const float keyWidth = 240f;
+        const float gap = 16f;
+        var grid = new GridContainer { Columns = 2 };
+        grid.AddThemeConstantOverride("h_separation", (int)gap);
+        grid.AddThemeConstantOverride("v_separation", 4);
+        foreach (var (keys, action) in rows)
+        {
+            var key = new Label { Text = keys, CustomMinimumSize = new Vector2(keyWidth, 0f) };
+            key.AddThemeColorOverride("font_color", Palette.Gold);
+            key.AddThemeFontSizeOverride("font_size", 13);
+            grid.AddChild(key);
+
+            var text = new Label
+            {
+                Text = action,
+                AutowrapMode = TextServer.AutowrapMode.WordSmart,
+                CustomMinimumSize = new Vector2(dialog.ContentWidth - keyWidth - gap, 0f),
+            };
+            text.AddThemeFontSizeOverride("font_size", 13);
+            grid.AddChild(text);
+        }
+        dialog.Body.AddChild(grid);
+    }
+
+    /// <summary>The logo's own off-white, so it sits on a card instead of a hard-edged square.</summary>
+    private static readonly Color LogoBackground = new(0.992f, 0.988f, 0.976f);
 
     private const string LogoPath = "res://images/logo.png";
 
@@ -1039,10 +1078,10 @@ public partial class Hud : Control
                 break;
             }
             case HelpControls:
-                _helpDialog?.PopupCentered();
+                _helpDialog?.Open();
                 break;
             case HelpAbout:
-                _aboutDialog?.PopupCentered();
+                _aboutDialog?.Open();
                 break;
         }
     }
