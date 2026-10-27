@@ -14,7 +14,8 @@ public enum ColorMode
 
 public static class Palette
 {
-    public static readonly Color Background = Hex(0x0b0f17);
+    /// <summary>The 3D world behind the atoms: pure black so they stand out against the blue-gray panels.</summary>
+    public static readonly Color Background = Hex(0x000000);
     public static readonly Color Proton = Hex(0xff5a5f);
     public static readonly Color Neutron = Hex(0x7f9cc0);
     public static readonly Color Ionic = Hex(0x4cc9f0);
