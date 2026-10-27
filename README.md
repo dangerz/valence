@@ -84,7 +84,8 @@ this: only classes the flow has reached are labeled.
   event wiring show as smaller "likely" pulses.
 
 The demo graph includes four sample web requests, so **Play Trigger ▸ request** works right away.
-Roadmap: [docs/ROADMAP.md](docs/ROADMAP.md).
+Roadmap: [docs/ROADMAP.md](docs/ROADMAP.md). Contributing with an AI agent (e.g. adding a language):
+[AGENTS.md](AGENTS.md).
 
 ## Layout
 
@@ -98,6 +99,7 @@ probes/python/        Python probe (tree-sitter): built in
 tools/make_icon.py    rebuilds the app icon from the logo
 valence/              Godot 4.7 (.NET) viewer
 docs/plugin-protocol.md   how to write a probe for another language
+AGENTS.md             guide for AI agents contributing (rules, structure, adding a language)
 ```
 
 Languages are plugins ("probes"). C# (Roslyn) and Python (tree-sitter) are built in and run
