@@ -142,7 +142,7 @@ docs/ROADMAP.md          what's done, what's next, language order
 images/logo.png          the original logo
 tools/make_icon.py       rebuilds valence/images/icon.png from the logo (pure Python, --mark-only)
 tools/build_ui_sheets.py rebuilds valence/images/ui/{icons,panels}.png from images/ui-source/
-images/ui-source/        the original UI art: icon sheet, nine-patch panel sheet, the UI mockup
+images/ui-source/        the original UI art: icon sheet and nine-patch panel sheet
 
 src/Valence.Schema/      the JSON contract as C# classes (Model.cs) + serializer (ValenceJson.cs)
 src/Valence.Core/        analysis engine used by viewer and CLI
@@ -247,7 +247,7 @@ in `user://`.
 
 ---
 
-**UI style** (follow `images/ui-source/mockup.webp`): build controls with `UiKit` and style them
+**UI style** (match the existing panels: dark navy, thin blue nine-patch borders, cyan titles): build controls with `UiKit` and style them
 with `UiAssets.Box(Patch.…)` nine-patches, not ad-hoc flat boxes; icons come from
 `UiAssets.Icon("name")`. A new icon goes in `tools/build_ui_sheets.py` (drawn in the same light-cyan
 stroke with a thin darker outline), appended to `ICON_NAMES` there and to `IconNames` in
