@@ -23,6 +23,8 @@ public partial class AtomView : Node3D
     private float _expansion;
     private bool _focused;
     private bool _dimmed;
+    private bool _labelNearMouse = true;
+    private Color _labelBase = Colors.White;
 
     public AtomData? Data { get; private set; }
 
@@ -85,6 +87,7 @@ public partial class AtomView : Node3D
         }
 
         _labelColor = tint.Lightened(0.45f);
+        _labelBase = _labelColor;
         _label = new Label3D
         {
             Text = data.ShortName,
@@ -110,10 +113,17 @@ public partial class AtomView : Node3D
         _cloud?.SetInstanceShaderParameter("highlight", focused ? 1f : 0f);
         if (_label != null)
         {
-            var color = focused ? Colors.White : dimmed ? _labelColor.Darkened(0.55f) : _labelColor;
-            _label.Modulate = new Color(color.R, color.G, color.B, _opacity);
-            _label.OutlineModulate = new Color(0f, 0f, 0f, _opacity);
+            _labelBase = focused ? Colors.White : dimmed ? _labelColor.Darkened(0.55f) : _labelColor;
+            ApplyLabelAlpha(_labelNearMouse && IsInsideTree() ? LabelProximity.Factor(GetViewport(), _label.GlobalPosition) : 1f);
         }
+    }
+
+    private void ApplyLabelAlpha(float factor)
+    {
+        if (_label == null) return;
+        var alpha = _opacity * factor;
+        _label.Modulate = new Color(_labelBase.R, _labelBase.G, _labelBase.B, alpha);
+        _label.OutlineModulate = new Color(0f, 0f, 0f, alpha);
     }
 
     /// <summary>1 shown, the quiet fade when quiet, 0 hidden (the whole atom disappears).</summary>
@@ -140,6 +150,9 @@ public partial class AtomView : Node3D
         if (_label == null) return;
         _label.VisibilityRangeEnd = pinned ? 0f : _labelRange;
         _label.Visible = pinned || !exclusive;
+        // Unpinned names only show near the mouse (exclusive mode hides them outright).
+        _labelNearMouse = !pinned && !exclusive;
+        ApplyLabelAlpha(_labelNearMouse && IsInsideTree() ? LabelProximity.Factor(GetViewport(), _label.GlobalPosition) : 1f);
     }
 
     /// <summary>0 = packed nucleus with orbits; 1 = opened to <paramref name="openRadius"/>.</summary>
@@ -156,6 +169,7 @@ public partial class AtomView : Node3D
     public override void _Process(double delta)
     {
         foreach (var (spinner, speed) in _spinners) spinner.RotateY(speed * (float)delta);
+        if (_labelNearMouse && _label is { Visible: true }) ApplyLabelAlpha(LabelProximity.Factor(GetViewport(), _label.GlobalPosition));
     }
 
     private static float Fract(float value) => value - MathF.Floor(value);

@@ -20,6 +20,10 @@ public sealed class PortData
     public Vector3 Position { get; set; }
     public MeshInstance3D? Mesh { get; set; }
     public Label3D? Label { get; set; }
+
+    /// <summary>Label alpha before the near-mouse fade.</summary>
+    public float BaseAlpha { get; set; }
+    public bool NearMouse { get; set; }
 }
 
 /// <summary>
@@ -142,12 +146,29 @@ public partial class FocusView : Node3D
             if (port.Mesh != null) port.Mesh.Visible = _fade > 0.01f && !port.Other.IsHidden;
             if (port.Label == null) continue;
             var pinned = _pinned.Contains(port.Other);
-            var alpha = (pinned || !_exclusive ? _fade : 0f) * port.Other.Opacity;
+            port.BaseAlpha = (pinned || !_exclusive ? _fade : 0f) * port.Other.Opacity;
+            port.NearMouse = !pinned && !_exclusive; // unpinned port labels only show near the mouse
             port.Label.VisibilityRangeEnd = pinned ? 0f : _zoomRange;
-            port.Label.Visible = alpha > 0.01f;
-            var color = port.Label.Modulate;
-            port.Label.Modulate = new Color(color.R, color.G, color.B, alpha);
-            port.Label.OutlineModulate = new Color(0f, 0f, 0f, alpha);
+            SetPortAlpha(port);
         }
+    }
+
+    public override void _Process(double delta)
+    {
+        foreach (var port in _ports)
+        {
+            if (port.NearMouse) SetPortAlpha(port);
+        }
+    }
+
+    private void SetPortAlpha(PortData port)
+    {
+        if (port.Label == null) return;
+        var factor = port.NearMouse && IsInsideTree() ? LabelProximity.Factor(GetViewport(), port.Label.GlobalPosition) : 1f;
+        var alpha = port.BaseAlpha * factor;
+        port.Label.Visible = alpha > 0.01f;
+        var color = port.Label.Modulate;
+        port.Label.Modulate = new Color(color.R, color.G, color.B, alpha);
+        port.Label.OutlineModulate = new Color(0f, 0f, 0f, alpha);
     }
 }

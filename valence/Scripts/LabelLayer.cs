@@ -91,6 +91,8 @@ public partial class LabelLayer : Node3D
         {
             _labels[node].QueueFree();
             _labels.Remove(node);
+            _nearMouse.Remove(node);
+            _baseColor.Remove(node);
         }
         foreach (var node in wanted)
         {
@@ -146,6 +148,32 @@ public partial class LabelLayer : Node3D
             alpha = _openFade;
         }
         alpha *= node.Opacity; // hidden → no label; quiet → faded
+
+        // Unpinned labels outside simulation only show near the mouse; _Process keeps them updated.
+        var nearMouse = !_simulation && !_pinned.Contains(node) && !_exclusive;
+        _baseColor[node] = new Color(color.R, color.G, color.B, alpha);
+        if (nearMouse) _nearMouse.Add(node);
+        else _nearMouse.Remove(node);
+        SetAlpha(label, _baseColor[node], nearMouse && IsInsideTree() ? LabelProximity.Factor(GetViewport(), label.GlobalPosition) : 1f);
+    }
+
+    private readonly Dictionary<NodeData, Color> _baseColor = new();
+    private readonly HashSet<NodeData> _nearMouse = new();
+
+    public override void _Process(double delta)
+    {
+        if (_nearMouse.Count == 0) return;
+        var viewport = GetViewport();
+        foreach (var node in _nearMouse)
+        {
+            if (!_labels.TryGetValue(node, out var label) || !_baseColor.TryGetValue(node, out var color)) continue;
+            SetAlpha(label, color, LabelProximity.Factor(viewport, label.GlobalPosition));
+        }
+    }
+
+    private static void SetAlpha(Label3D label, Color color, float factor)
+    {
+        var alpha = color.A * factor;
         label.Visible = alpha > 0.01f;
         label.Modulate = new Color(color.R, color.G, color.B, alpha);
         label.OutlineModulate = new Color(0f, 0f, 0f, alpha);
