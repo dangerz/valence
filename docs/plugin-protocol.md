@@ -10,10 +10,10 @@ graph the viewer draws.
 repo ──read-only──▶ probe(s) ──probe output──▶ Valence.Core ──graph.json──▶ Godot viewer
 ```
 
-**Built-in probes.** C# ships built in: `Valence.Core.IProbe` is implemented in-process by
-`CSharpProbe`, so the viewer can analyze a folder without any separately built tools. The same
-analyzer is still a normal probe (`probes/csharp`, `probe.json`), and its output is identical either
-way. When an external probe has the same `name` as a built-in one, the built-in wins.
+**Built-in probes.** C# and Python ship built in: `Valence.Core.IProbe` is implemented in-process by
+`CSharpProbe` and `PythonProbe` (tree-sitter, via `src/Valence.Syntax`), so the viewer can analyze a
+folder without any separately built tools or language runtimes. The C# analyzer is still a normal
+probe too (`probes/csharp`, `probe.json`), and its output is identical either way. When an external probe has the same `name` as a built-in one, the built-in wins.
 
 ## 1. The manifest: `probe.json`
 
@@ -128,6 +128,11 @@ protons, everything else as neutrons.
 Edges may carry `"confidence"`: omitted means **certain** (resolved by a compiler/type checker),
 `"likely"` (type hints, imports, virtual dispatch, framework conventions), `"guess"` (name match
 only). Dynamic languages will produce many guesses; the viewer draws them more faintly.
+
+For dynamic languages, a name resolved statically through the language's own scoping and imports
+(a class defined in the file, `from .models import User`) counts as certain; anything that depends on
+an inferred type (`self.repo.save()`, a type-hinted parameter, `x = Foo(); x.run()`) or an approximate
+module match is `likely`. The Python probe follows this.
 
 ### Members and flow (optional, additive)
 

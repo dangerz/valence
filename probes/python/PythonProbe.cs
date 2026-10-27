@@ -4,8 +4,9 @@ using Valence.Schema;
 namespace Valence.Probe.Python;
 
 /// <summary>
-/// Built-in Python probe, parsed in-process with tree-sitter (no Python install needed).
-/// Currently a spike: structure only, no dependencies yet (see <see cref="PythonAnalyzer"/>).
+/// Built-in Python probe, parsed in-process with tree-sitter (no Python install needed): classes and
+/// files with free functions as nucleons, and bonds from statically resolved names
+/// (see <see cref="PythonAnalyzer"/>). Member-level flow and entry points come later.
 /// </summary>
 public sealed class PythonProbe : IProbe
 {

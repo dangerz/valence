@@ -20,9 +20,14 @@ It never clones, builds, runs, records or writes to the repo.
 
 - Godot scene files (`.tscn`): attached scripts and signal connections as wiring.
 - Method-level selection (flow from one method rather than a whole class).
-5. **Tree-sitter engine**: one embedded parser library with bundled grammars so new languages run
-   in-process with no language runtimes installed, plus per-language name resolution and
-   data-driven *framework packs* (entry points and event conventions).
+5. **Tree-sitter engine** (started): `Valence.Syntax` loads tree-sitter and its bundled grammars
+   in-process (TreeSitter.DotNet), so new languages need no language runtimes installed. Each
+   language adds its own name resolution, plus data-driven *framework packs* (entry points and
+   event conventions).
+6. **Python** (in progress, built in): packages/folders as atoms; classes and files with free
+   functions as nucleons; bonds from statically resolved names (imports incl. relative and
+   `__init__.py` re-exports, `self` fields, type hints, constructor calls). Next: member-level
+   flow (ordered calls) and entry points (`__main__`, then Django, Flask/FastAPI, pygame).
 
 ## Languages (planned, roughly in this order)
 
@@ -30,7 +35,7 @@ It never clones, builds, runs, records or writes to the repo.
 |----------|----------------------|------------------------|
 | C# | projects / namespaces | Godot, .NET (done) |
 | PHP | `composer.json` PSR-4 namespaces | Laravel, Symfony, WordPress |
-| Python | packages (`__init__.py`, `pyproject.toml`) | Django, Flask/FastAPI, pygame |
+| Python (in progress) | packages (`__init__.py`) / folders | Django, Flask/FastAPI, pygame |
 | Java | Maven/Gradle modules / packages | Spring, Android |
 | Ruby | gems / `lib` folders / Rails app dirs | Rails |
 | Objective-C | Xcode targets / folders | UIKit/AppKit (app delegate, actions) |
