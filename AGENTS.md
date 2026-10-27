@@ -168,13 +168,14 @@ valence/                 the Godot 4.7 (.NET, C#) viewer
   Scripts/Main.cs        orchestrator: loading, selection, visibility, colors, labels, simulation
   Scripts/Hud.cs         all 2D UI built in code: menu bar, panels, filter/timeline bars, dialogs
   Scripts/ValenceTheme.cs  the one UI theme (bordered panels, menus, buttons, inputs, tree)
-  Scripts/ModalDialog.cs   in-app bordered dialogs (About, Controls)
+  Scripts/ModalDialog.cs   in-app bordered dialogs (About, Controls); SnapshotsDialog.cs builds on it
   Scripts/*Panel.cs, ProgressOverlay.cs, PanelResizer.cs, RangeSlider.cs   UI pieces
   Scripts/GraphModel.cs  the loaded graph, indexed for the viewer
   Scripts/FlowSimulator.cs, SimulationView.cs   static simulation
   Scripts/Layout.cs, DependencyLayers.cs, AtomView.cs, NucleonRenderer.cs, BondRenderer.cs,
           DetailLines.cs, LabelLayer.cs, LabelProximity.cs, FocusView.cs, OrbitCamera.cs   3D view
-  Scripts/Palette.cs     every color; Storage.cs: user:// persistence; Comparison.cs: snapshots
+  Scripts/Palette.cs     every color; Storage.cs: user:// persistence; Comparison.cs: compare +
+                         SnapshotStore (save, list, rename via names.json, delete to trash)
   Scripts/AnalyzerLauncher.cs  runs the analysis in-process; registers the built-in probes
   Shaders/               atom cloud, bond flow, nucleon shaders
   images/logo.png (boot splash), images/icon.png (app icon)
@@ -209,7 +210,7 @@ repo folder ──read-only──▶ probes ──ProbeOutput──▶ GraphBuil
   members don't exist, so every member you link to must be listed on some node.
 
 **Viewer state flow** (`Main.cs`): `ApplyVisibility` computes each node's opacity (hide/quiet ×
-untouched-by-simulation × timeline presence × usage filter). `RefreshSelection` drives
+untouched-by-simulation × timeline presence × usage filter × only-differences while comparing). `RefreshSelection` drives
 `ApplyLabels`, `ApplyColors` and `UpdateLines`. `NodeColor` branches: simulation → compare →
 timeline → anchor/focus. All UI is built in code (no scenes beyond `Main.tscn`) and themed by
 `ValenceTheme`. Settings live in `user://viewer.json`; layouts, visibility and favorites per repo

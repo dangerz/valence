@@ -91,7 +91,10 @@ public partial class Main : Node3D
     private float _brightness = 0.75f;
 
     // Snapshot comparison (View ▸ Compare With): added/changed classes vs a saved snapshot.
+    // Only Show Differences hides everything else while comparing (the choice is kept between compares).
     private Comparison? _comparison;
+    private string? _comparisonPath;
+    private bool _onlyDifferences;
 
     // Git timeline: the frame being shown, which classes exist in it, and which are new since the previous frame.
     private Timeline? _timeline;
@@ -291,6 +294,21 @@ public partial class Main : Node3D
         _hud.SnapshotRequested += TakeSnapshot;
         _hud.CompareRequested += StartCompare;
         _hud.StopCompareRequested += StopCompare;
+        _hud.ManageSnapshotsRequested += OpenSnapshots;
+        _hud.OnlyDifferencesChanged += on =>
+        {
+            _onlyDifferences = on;
+            ApplyVisibility();
+            ReportComparison();
+        };
+        _hud.Snapshots.CompareRequested += path =>
+        {
+            _hud.Snapshots.Close();
+            StartCompare(path);
+        };
+        _hud.Snapshots.RenameRequested += RenameSnapshot;
+        _hud.Snapshots.DeleteRequested += DeleteSnapshot;
+        _hud.Snapshots.TakeRequested += TakeSnapshot;
         _hud.TimelineBuildRequested += BuildTimeline;
         _hud.TimelineShowRequested += LoadTimeline;
         _hud.TimelineHideRequested += HideTimeline;
@@ -334,6 +352,7 @@ public partial class Main : Node3D
         StopSimulation();
         ClearSelection();
         _comparison = null;
+        _comparisonPath = null;
         _timeline = null;
         _timelinePresent = null;
         _timelinePlaying = false;
@@ -817,8 +836,42 @@ public partial class Main : Node3D
     {
         if (_model == null) return;
         var path = SnapshotStore.Save(_model.Graph);
-        _hud.SetSnapshots(SnapshotStore.List(_model.Graph.Repo.Root));
+        RefreshSnapshots();
         _hud.SetStatus($"Snapshot saved ({SnapshotStore.LabelFor(path)}). Later: File ▸ Re-analyze, then View ▸ Compare With Snapshot.");
+    }
+
+    /// <summary>File ▸ Snapshots…: the list with Compare, Rename and Delete.</summary>
+    private void OpenSnapshots()
+    {
+        if (_model == null) return;
+        RefreshSnapshots();
+        _hud.Snapshots.SetEntries(_model.Graph.Repo.Name, SnapshotStore.Entries(_model.Graph.Repo.Root), _comparisonPath);
+        _hud.Snapshots.Open();
+    }
+
+    /// <summary>Re-reads the snapshot folder into the Compare menu and, if it's open, the Snapshots dialog.</summary>
+    private void RefreshSnapshots()
+    {
+        if (_model == null) return;
+        var root = _model.Graph.Repo.Root;
+        _hud.SetSnapshots(SnapshotStore.List(root));
+        if (_hud.Snapshots.Visible) _hud.Snapshots.SetEntries(_model.Graph.Repo.Name, SnapshotStore.Entries(root), _comparisonPath);
+    }
+
+    private void RenameSnapshot(string path, string name)
+    {
+        SnapshotStore.Rename(path, name);
+        RefreshSnapshots();
+        _hud.SetStatus(name.Length > 0 ? $"Snapshot renamed to \"{name}\"" : "Snapshot name cleared (shown by date)");
+    }
+
+    private void DeleteSnapshot(string path)
+    {
+        var label = SnapshotStore.LabelFor(path);
+        if (path == _comparisonPath) StopCompare();
+        var error = SnapshotStore.Delete(path);
+        RefreshSnapshots();
+        _hud.SetStatus(error == null ? $"Snapshot {label} moved to the trash" : $"Could not delete snapshot: {error}");
     }
 
     private void StartCompare(string path)
@@ -835,20 +888,36 @@ public partial class Main : Node3D
             return;
         }
         _comparison = Comparison.Build(snapshot, _model, SnapshotStore.LabelFor(path));
+        _comparisonPath = path;
         _hud.SetCompareActive(true);
         _hud.ShowInfo(InfoText.ForComparison(_comparison, _model));
-        _hud.SetStatus($"Comparing with {_comparison.Label}: {_comparison.Added.Count} added, " +
-                       $"{_comparison.Changed.Count} changed, {_comparison.Removed.Count} removed");
-        ApplyColors();
+        ApplyVisibility();      // colors, and Only Show Differences if it's on
+        ReportComparison();
     }
 
     private void StopCompare()
     {
         _comparison = null;
+        _comparisonPath = null;
         _hud.SetCompareActive(false);
         ShowSummary();
-        ApplyColors();
+        ApplyVisibility();
     }
+
+    private void ReportComparison()
+    {
+        if (_comparison == null) return;
+        var c = _comparison;
+        _hud.SetStatus(_onlyDifferences
+            ? $"Only differences since {c.Label}: {c.Added.Count} added, {c.Changed.Count} changed shown; " +
+              $"{c.Removed.Count} removed (listed in the inspector)"
+            : $"Comparing with {c.Label}: {c.Added.Count} added, {c.Changed.Count} changed, {c.Removed.Count} removed");
+    }
+
+    /// <summary>While Only Show Differences is on during a compare: whether a class was added or changed.</summary>
+    private bool ShowsAsDifference(NodeData node) =>
+        _comparison == null || !_onlyDifferences
+        || _comparison.Added.Contains(node.Info.Id) || _comparison.Changed.Contains(node.Info.Id);
 
     // ---------------------------------------------------------------- git timeline
 
@@ -1052,16 +1121,18 @@ public partial class Main : Node3D
                 var atomExists = present == null || atom.Nodes.Any(n => present.Contains(n.Info.Id));
                 // Usage filter: a system with no classes in the range is hidden/ghosted as a whole.
                 var atomPassesUsage = atom.Nodes.Any(PassesUsageFilter);
+                // Only Show Differences: a system with no added or changed classes goes away too.
+                var atomDiffers = atom.Nodes.Any(ShowsAsDifference);
                 atom.UserOpacity = OpacityOf(atomState);
                 atom.Opacity = atom.UserOpacity * UntouchedFactor(_revealedAtoms.Contains(atom)) * (atomExists ? 1f : 0f)
-                               * UsageFactor(atomPassesUsage);
+                               * UsageFactor(atomPassesUsage) * (atomDiffers ? 1f : 0f);
                 atom.View?.SetOpacity(atom.Opacity);
                 foreach (var node in atom.Nodes)
                 {
                     var exists = present == null || present.Contains(node.Info.Id);
                     node.UserOpacity = OpacityOf(Most(atomState, StateOf("node:" + node.Info.Id)));
                     node.Opacity = node.UserOpacity * UntouchedFactor(_heat.ContainsKey(node)) * (exists ? 1f : 0f)
-                                   * UsageFactor(PassesUsageFilter(node));
+                                   * UsageFactor(PassesUsageFilter(node)) * (ShowsAsDifference(node) ? 1f : 0f);
                 }
             }
         }

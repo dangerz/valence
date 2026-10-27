@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Godot;
 using Valence.Schema;
 
@@ -60,9 +61,23 @@ public sealed class Comparison
     }
 }
 
-/// <summary>Saved copies of a repo's graph in ~/.valence/snapshots/&lt;repo&gt;, newest first.</summary>
+/// <summary>One saved snapshot: its file, when it was taken, the commit, and an optional name.</summary>
+public sealed record SnapshotEntry(string Path, string Stamp, string? Commit, string? Name, long Bytes)
+{
+    /// <summary>The name with its date ("Before refactor · 2026-10-26 14:03"), or the date and commit.</summary>
+    public string Label => Name != null
+        ? $"{Name} · {(Stamp.Length >= 16 ? Stamp[..16] : Stamp)}"
+        : Commit != null ? $"{Stamp} · {Commit}" : Stamp;
+}
+
+/// <summary>
+/// Saved copies of a repo's graph in ~/.valence/snapshots/&lt;repo&gt;, newest first. Names given in
+/// the Snapshots dialog live in names.json beside them, so file names (and their order) never change.
+/// </summary>
 public static class SnapshotStore
 {
+    private const string NamesFile = "names.json";
+
     public static string Save(Graph graph)
     {
         var commit = string.IsNullOrEmpty(graph.Repo.Commit) ? "" : "_" + graph.Repo.Commit[..Math.Min(8, graph.Repo.Commit.Length)];
@@ -71,25 +86,105 @@ public static class SnapshotStore
         return path;
     }
 
-    /// <summary>(menu label, file path), newest first.</summary>
-    public static List<(string Label, string Path)> List(string repoRoot)
+    /// <summary>Every snapshot of the repo, newest first.</summary>
+    public static List<SnapshotEntry> Entries(string repoRoot)
     {
         var dir = DirectoryFor(repoRoot);
-        if (!Directory.Exists(dir)) return new List<(string, string)>();
+        if (!Directory.Exists(dir)) return new List<SnapshotEntry>();
+        var names = ReadNames(dir);
         return Directory.GetFiles(dir, "*.valence.json")
             .OrderByDescending(f => f, StringComparer.Ordinal)
-            .Select(f => (LabelFor(f), f))
+            .Select(f => EntryFor(f, names))
             .ToList();
     }
 
-    /// <summary>"2026-10-26_14-03-12_ab12cd34.valence.json" → "2026-10-26 14:03:12 · ab12cd34".</summary>
-    public static string LabelFor(string path)
+    /// <summary>(menu label, file path), newest first.</summary>
+    public static List<(string Label, string Path)> List(string repoRoot) =>
+        Entries(repoRoot).Select(e => (e.Label, e.Path)).ToList();
+
+    public static string LabelFor(string path) =>
+        EntryFor(path, ReadNames(System.IO.Path.GetDirectoryName(path) ?? "")).Label;
+
+    /// <summary>Names a snapshot; an empty name goes back to the date.</summary>
+    public static void Rename(string path, string name)
     {
-        var name = System.IO.Path.GetFileName(path).Replace(".valence.json", "");
-        var parts = name.Split('_');
-        if (parts.Length < 2) return name;
-        var label = $"{parts[0]} {parts[1].Replace('-', ':')}";
-        return parts.Length > 2 ? $"{label} · {parts[2]}" : label;
+        var dir = System.IO.Path.GetDirectoryName(path) ?? "";
+        var names = ReadNames(dir);
+        var file = System.IO.Path.GetFileName(path);
+        if (string.IsNullOrWhiteSpace(name)) names.Remove(file);
+        else names[file] = name.Trim();
+        WriteNames(dir, names);
+    }
+
+    /// <summary>Moves a snapshot to the system trash (deletes it if there's no trash). Null on success.</summary>
+    public static string? Delete(string path)
+    {
+        var error = OS.MoveToTrash(path);
+        if (error != Error.Ok)
+        {
+            try
+            {
+                File.Delete(path);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                return e.Message;
+            }
+        }
+        var dir = System.IO.Path.GetDirectoryName(path) ?? "";
+        var names = ReadNames(dir);
+        if (names.Remove(System.IO.Path.GetFileName(path))) WriteNames(dir, names);
+        return null;
+    }
+
+    /// <summary>"2026-10-26_14-03-12_ab12cd34.valence.json" → stamp "2026-10-26 14:03:12", commit "ab12cd34".</summary>
+    private static SnapshotEntry EntryFor(string path, Dictionary<string, string> names)
+    {
+        var file = System.IO.Path.GetFileName(path);
+        var parts = file.Replace(".valence.json", "").Split('_');
+        var stamp = parts.Length >= 2 ? $"{parts[0]} {parts[1].Replace('-', ':')}" : parts[0];
+        var commit = parts.Length > 2 ? parts[2] : null;
+        long bytes;
+        try
+        {
+            bytes = new FileInfo(path).Length;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            bytes = 0;
+        }
+        return new SnapshotEntry(path, stamp, commit, names.GetValueOrDefault(file), bytes);
+    }
+
+    private static Dictionary<string, string> ReadNames(string dir)
+    {
+        try
+        {
+            var path = System.IO.Path.Combine(dir, NamesFile);
+            if (File.Exists(path))
+            {
+                return JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(path))
+                       ?? new Dictionary<string, string>();
+            }
+        }
+        catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException)
+        {
+            GD.PushWarning($"Could not read snapshot names: {e.Message}");
+        }
+        return new Dictionary<string, string>();
+    }
+
+    private static void WriteNames(string dir, Dictionary<string, string> names)
+    {
+        try
+        {
+            Directory.CreateDirectory(dir);
+            File.WriteAllText(System.IO.Path.Combine(dir, NamesFile), JsonSerializer.Serialize(names));
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            GD.PushWarning($"Could not save snapshot names: {e.Message}");
+        }
     }
 
     private static string DirectoryFor(string repoRoot)

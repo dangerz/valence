@@ -81,8 +81,10 @@ public partial class ModalDialog : Control
 
     public override void _Input(InputEvent @event)
     {
-        // While open, keys belong to the dialog: shortcuts behind it don't fire.
+        // While open, keys belong to the dialog: shortcuts behind it don't fire. Typing in one of
+        // the dialog's own text fields goes to the field (it handles Enter and Esc itself).
         if (!Visible || @event is not InputEventKey key) return;
+        if (GetViewport().GuiGetFocusOwner() is LineEdit or TextEdit && IsAncestorOf(GetViewport().GuiGetFocusOwner())) return;
         if (key.Pressed && key.Keycode is Key.Escape or Key.Enter or Key.KpEnter) Close();
         GetViewport().SetInputAsHandled();
     }

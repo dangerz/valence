@@ -26,13 +26,16 @@ public partial class Hud : Control
     private const int ViewShowAll = 26;
     private const int ViewStopCompare = 27;
     private const int ViewUsageFilter = 28;
+    private const int ViewOnlyDifferences = 29;
     private const int FileSnapshot = 4;
+    private const int FileSnapshots = 5;
     private const int TimelineBuild10 = 110;
     private const int TimelineBuild25 = 111;
     private const int TimelineBuild50 = 112;
     private const int TimelineShow = 113;
     private const int TimelineHide = 114;
     private const int CompareBase = 2000;
+    private const int CompareManage = CompareBase - 2;
 
     private static readonly float[] Brightnesses = { 0.25f, 0.5f, 0.75f, 1f, 1.25f };
 
@@ -137,6 +140,15 @@ public partial class Hud : Control
     public event Action? SnapshotRequested;
     public event Action<string>? CompareRequested;
     public event Action? StopCompareRequested;
+
+    /// <summary>File ▸ Snapshots… or Compare With Snapshot ▸ Manage Snapshots….</summary>
+    public event Action? ManageSnapshotsRequested;
+
+    /// <summary>View ▸ Only Show Differences toggled (only enabled while comparing).</summary>
+    public event Action<bool>? OnlyDifferencesChanged;
+
+    /// <summary>The snapshot list with Compare/Rename/Delete; Main fills it and handles its events.</summary>
+    public SnapshotsDialog Snapshots { get; } = new();
     public event Action<int>? TimelineBuildRequested;
     public event Action? TimelineShowRequested;
     public event Action? TimelineHideRequested;
@@ -351,9 +363,16 @@ public partial class Hud : Control
             _compareMenu.AddItem("(no snapshots yet: File ▸ Take Snapshot)", CompareBase - 1);
             _compareMenu.SetItemDisabled(0, true);
         }
+        _compareMenu.AddSeparator();
+        _compareMenu.AddItem("Manage Snapshots…", CompareManage);
     }
 
-    public void SetCompareActive(bool active) => SetDisabled(_viewMenu, ViewStopCompare, !active);
+    /// <summary>Stop Comparing and Only Show Differences only make sense while comparing.</summary>
+    public void SetCompareActive(bool active)
+    {
+        SetDisabled(_viewMenu, ViewStopCompare, !active);
+        SetDisabled(_viewMenu, ViewOnlyDifferences, !active);
+    }
 
     public void ShowTimeline(int frames)
     {
@@ -387,6 +406,11 @@ public partial class Hud : Control
 
     private void OnCompare(int id)
     {
+        if (id == CompareManage)
+        {
+            ManageSnapshotsRequested?.Invoke();
+            return;
+        }
         var index = id - CompareBase;
         if (index >= 0 && index < _snapshotPaths.Count) CompareRequested?.Invoke(_snapshotPaths[index]);
     }
@@ -636,6 +660,7 @@ public partial class Hud : Control
         _fileMenu.AddSeparator();
         _fileMenu.AddItem("Re-analyze", FileReanalyze);
         _fileMenu.AddItem("Take Snapshot (to compare later)", FileSnapshot);
+        _fileMenu.AddItem("Snapshots…", FileSnapshots);
         SetShortcut(_fileMenu, FileReanalyze, Key.R);
         _fileMenu.AddSeparator();
         _fileMenu.AddItem("Quit", FileQuit);
@@ -691,6 +716,7 @@ public partial class Hud : Control
         _compareMenu.IdPressed += id => OnCompare((int)id);
         _viewMenu.AddSubmenuNodeItem("Compare With Snapshot", _compareMenu);
         _viewMenu.AddItem("Stop Comparing", ViewStopCompare);
+        _viewMenu.AddCheckItem("Only Show Differences", ViewOnlyDifferences);
         _viewMenu.AddSeparator();
         _viewMenu.AddCheckItem("Filter by Usage (used-by count)", ViewUsageFilter);
         _viewMenu.AddSeparator();
@@ -948,6 +974,9 @@ public partial class Hud : Control
                 HorizontalAlignment.Center, 13)
             .AddThemeColorOverride("font_color", Palette.MutedText);
         AddChild(_aboutDialog);
+
+        Snapshots.BuildList();
+        AddChild(Snapshots);
     }
 
     /// <summary>A titled group of "keys · action" rows in a two-column grid.</summary>
@@ -1002,6 +1031,17 @@ public partial class Hud : Control
             case ViewStopCompare:
                 StopCompareRequested?.Invoke();
                 break;
+            case FileSnapshots:
+                ManageSnapshotsRequested?.Invoke();
+                break;
+            case ViewOnlyDifferences:
+            {
+                var index = _viewMenu!.GetItemIndex(ViewOnlyDifferences);
+                var on = !_viewMenu.IsItemChecked(index);
+                _viewMenu.SetItemChecked(index, on);
+                OnlyDifferencesChanged?.Invoke(on);
+                break;
+            }
             case ViewUsageFilter:
                 SetUsageFilterVisible(!(_filterBar?.Visible ?? false));
                 break;

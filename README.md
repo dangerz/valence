@@ -77,6 +77,8 @@ this: only classes the flow has reached are labeled.
 * **File ▸ Take Snapshot** saves the current graph to `~/.valence/snapshots/`. After the code
   changes, File ▸ Re-analyze and **View ▸ Compare With Snapshot**: added classes turn green, changed
   ones amber, the rest dim, and the inspector lists added, changed and removed classes.
+  **View ▸ Only Show Differences** (enabled while comparing) hides everything that didn't change.
+  **File ▸ Snapshots…** lists a repo's snapshots to compare, rename or delete (moved to the trash).
 * **G**: play the **game loop**: every `_Process` / `_PhysicsProcess` / `_Draw`, tick after tick.
 * **Simulate ▸ Play Trigger**: startup, input, event handlers, web requests…
 * Space pauses/resumes, Simulate ▸ Speed changes pace, Esc stops. Classes heat up as the flow
