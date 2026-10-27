@@ -1,5 +1,6 @@
 """Turn the flat logo into a macOS-style app icon: squircle body, transparent outside, soft shadow.
-Pure Python (zlib only). Usage: make_icon.py <in.png> <out.png> [size]"""
+Pure Python (zlib only). Usage: make_icon.py <in.png> <out.png> [size] [--mark-only]
+--mark-only keeps just the mark: everything below the first horizontal gap (the wordmark) is dropped."""
 import struct, sys, zlib, math
 
 def read_png(path):
@@ -38,15 +39,25 @@ def write_png(path, w, h, rgba):
     open(path, 'wb').write(b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 6, 0, 0, 0))
                            + chunk(b'IDAT', zlib.compress(raw, 9)) + chunk(b'IEND', b''))
 
-src, out = sys.argv[1], sys.argv[2]
-SIZE = int(sys.argv[3]) if len(sys.argv) > 3 else 1024
+args = [a for a in sys.argv[1:] if not a.startswith('--')]
+MARK_ONLY = '--mark-only' in sys.argv
+src, out = args[0], args[1]
+SIZE = int(args[2]) if len(args) > 2 else 1024
 w, h, bpp, rows = read_png(src)
 lum = lambda r, g, b: 0.2126*r + 0.7152*g + 0.0722*b
 
 BG = (253, 252, 249)                       # the logo's own off-white
 # Ink colour and content bounds from the art itself.
+# Rows with ink; with --mark-only, stop at the first blank band after the mark (the wordmark follows).
+inked = [any(lum(rows[y][x*bpp], rows[y][x*bpp+1], rows[y][x*bpp+2]) < 128 for x in range(0, w, 2)) for y in range(h)]
+CUT_Y = h
+if MARK_ONLY:
+    first = inked.index(True)
+    gap = next(y for y in range(first, h) if not inked[y])
+    end = next((y for y in range(gap, h) if inked[y]), h)
+    CUT_Y = (gap + end) // 2               # middle of the blank band
 ink_samples, x0, y0, x1, y1 = [], w, h, 0, 0
-for y in range(0, h, 2):
+for y in range(0, CUT_Y, 2):
     row = rows[y]
     for x in range(0, w, 2):
         r, g, b = row[x*bpp], row[x*bpp+1], row[x*bpp+2]
@@ -61,7 +72,7 @@ print('content', (x0, y0, x1, y1), 'ink', INK)
 s = SIZE / 1024
 body, margin, N = 824*s, 100*s, 5.0
 half, cxb, cyb = body/2, SIZE/2, SIZE/2
-fill = 0.66                                # content's larger side as a share of the body
+fill = 0.62 if MARK_ONLY else 0.66       # content's larger side as a share of the body
 scale = body*fill / max(x1-x0, y1-y0)      # output px per source px
 ccx, ccy = (x0+x1)/2, (y0+y1)/2
 
@@ -71,7 +82,7 @@ def radius(px, py):                        # superellipse "radius": 1 on the edg
 
 def sample(px, py):                        # bilinear sample of the art, cleaned to flat bg/ink
     sx, sy = ccx + (px-cxb)/scale, ccy + (py-cyb)/scale
-    if sx < 0 or sy < 0 or sx >= w-1 or sy >= h-1: return BG
+    if sx < 0 or sy < 0 or sx >= w-1 or sy >= h-1 or sy >= CUT_Y - 1: return BG
     ix, iy = int(sx), int(sy); fx, fy = sx-ix, sy-iy
     r0, r1 = rows[iy], rows[iy+1]
     def px_l(row, x): return lum(row[x*bpp], row[x*bpp+1], row[x*bpp+2])
