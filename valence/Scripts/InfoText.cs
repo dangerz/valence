@@ -52,6 +52,40 @@ public static class InfoText
         return sb.ToString();
     }
 
+    public static string ForComparison(Comparison comparison, GraphModel model)
+    {
+        var sb = new StringBuilder();
+        sb.Append("[font_size=20][b]Compare[/b][/font_size]\n");
+        sb.Append($"[color={Muted}]now vs snapshot {Esc(comparison.Label)}[/color]\n\n");
+        sb.Append($"[color={Palette.Html(Palette.Added)}]● {comparison.Added.Count} added[/color]   ");
+        sb.Append($"[color={Palette.Html(Palette.Changed)}]● {comparison.Changed.Count} changed[/color]   ");
+        sb.Append($"[color={Muted}]{comparison.Removed.Count} removed[/color]\n");
+
+        void AppendGroup(string title, IEnumerable<string> ids, Godot.Color color)
+        {
+            var nodes = ids.Select(id => model.Nodes.GetValueOrDefault(id)).Where(n => n != null).Cast<NodeData>()
+                .OrderBy(n => n.Info.Name, StringComparer.OrdinalIgnoreCase).ToList();
+            if (nodes.Count == 0) return;
+            sb.Append($"\n[b][color={Palette.Html(color)}]{title}[/color][/b] ({nodes.Count})\n");
+            foreach (var node in nodes.Take(150))
+            {
+                sb.Append($"{NodeLink(node)} [color={Muted}]{Esc(node.Atom.ShortName)}[/color]\n");
+            }
+            if (nodes.Count > 150) sb.Append($"[color={Muted}]+{nodes.Count - 150} more[/color]\n");
+        }
+
+        AppendGroup("Added", comparison.Added, Palette.Added);
+        AppendGroup("Changed", comparison.Changed, Palette.Changed);
+        if (comparison.Removed.Count > 0)
+        {
+            sb.Append($"\n[b]Removed[/b] ({comparison.Removed.Count})\n");
+            foreach (var node in comparison.Removed.Take(150)) sb.Append($"{Esc(node.Name)} [color={Muted}]{Esc(node.FullName)}[/color]\n");
+            if (comparison.Removed.Count > 150) sb.Append($"[color={Muted}]+{comparison.Removed.Count - 150} more[/color]\n");
+        }
+        sb.Append($"\n[color={Muted}]View ▸ Stop Comparing to return to normal colors.[/color]\n");
+        return sb.ToString();
+    }
+
     public static string ForSimulation(FlowPlan plan, int tick, bool loop, IReadOnlyDictionary<NodeData, int> visits, GraphModel model)
     {
         var sb = new StringBuilder();

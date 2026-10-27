@@ -94,6 +94,48 @@ internal sealed class GitHistory
 
     private static long ParseCount(string value) => long.TryParse(value, out var n) ? n : 0;
 
+    internal sealed record CommitInfo(string Hash, DateTimeOffset Date, string Author, string Subject);
+
+    /// <summary>Commits on the current branch's first-parent line that touch this folder, oldest first.</summary>
+    internal static List<CommitInfo> FirstParentCommits(string root)
+    {
+        var output = Git(root, "log", "--first-parent", "--format=%H%x09%at%x09%an%x09%s", "--", ".");
+        var commits = new List<CommitInfo>();
+        if (output == null) return commits;
+        foreach (var raw in output.Split('\n'))
+        {
+            var parts = raw.TrimEnd('\r').Split('\t', 4);
+            if (parts.Length < 4 || !long.TryParse(parts[1], out var unix)) continue;
+            commits.Add(new CommitInfo(parts[0], DateTimeOffset.FromUnixTimeSeconds(unix), parts[2], parts[3]));
+        }
+        commits.Reverse();
+        return commits;
+    }
+
+    /// <summary>Path of <paramref name="root"/> relative to the git top level ("" or "sub/dir/").</summary>
+    internal static string PrefixOf(string root) => (Git(root, "rev-parse", "--show-prefix") ?? "").Trim();
+
+    /// <summary>
+    /// Writes the folder's files as of <paramref name="commit"/> into <paramref name="target"/> using
+    /// `git archive`, which only reads the repository: no checkout, no worktree, nothing in .git changes.
+    /// </summary>
+    internal static bool ExportTree(string root, string commit, string prefix, string target)
+    {
+        Directory.CreateDirectory(target);
+        var tar = target.TrimEnd(Path.DirectorySeparatorChar) + ".tar";
+        var treeish = string.IsNullOrEmpty(prefix) ? commit : $"{commit}:{prefix.TrimEnd('/')}";
+        if (Git(root, "archive", "--format=tar", "-o", tar, treeish) == null || !File.Exists(tar)) return false;
+        try
+        {
+            System.Formats.Tar.TarFile.ExtractToDirectory(tar, target, overwriteFiles: true);
+            return true;
+        }
+        finally
+        {
+            File.Delete(tar);
+        }
+    }
+
     private static string? Git(string root, params string[] args)
     {
         try

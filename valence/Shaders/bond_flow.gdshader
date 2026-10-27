@@ -12,6 +12,9 @@ instance uniform float highlight = 0.0;
 uniform float dash_density = 1.1;
 uniform float speed = 0.9;
 
+// View ▸ Brightness.
+uniform float brightness = 1.0;
+
 varying float along;
 
 void vertex() {
@@ -25,5 +28,5 @@ void fragment() {
 	float pulse = mix(forward, max(forward, backward), two_way);
 	float base = 0.22 + 0.35 * highlight;
 	ALBEDO = bond_color.rgb;
-	ALPHA = clamp((base + pulse * (0.7 + 0.6 * highlight)) * bond_color.a, 0.0, 1.0);
+	ALPHA = clamp((base + pulse * (0.7 + 0.6 * highlight)) * bond_color.a * brightness, 0.0, 1.0);
 }

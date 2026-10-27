@@ -27,6 +27,12 @@ public static class Palette
     /// <summary>Simulation: a class the flow just reached.</summary>
     public static readonly Color Gold = Hex(0xffc83d);
 
+    /// <summary>Compare / timeline: added since the snapshot or previous commit.</summary>
+    public static readonly Color Added = Hex(0x51cf66);
+
+    /// <summary>Compare: changed since the snapshot.</summary>
+    public static readonly Color Changed = Hex(0xfcc419);
+
     private static readonly Color HeatCold = Hex(0x2a4b8d);
     private static readonly Color HeatMid = Hex(0xd6336c);
     private static readonly Color HeatHot = Hex(0xffd43b);

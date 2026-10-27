@@ -57,6 +57,19 @@ them in source order, event and signal wiring, and entry points (Godot `_Process
   pulses arrive.
 
 Side panels can be resized by dragging their borders; widths are remembered.
+**View ▸ Brightness** turns the atom clouds, bonds, electrons and bloom up or down.
+
+### History
+
+* **Timeline ▸ Build Timeline (10 / 25 / 50 commits)** reads the folder's local git history,
+  exports each sampled commit with `git archive` into a temp folder (nothing in the repo or its
+  working copy is touched), and analyzes it. Then drag the timeline slider, or press ▶, to watch
+  the code grow: classes appear as they're added, new ones glow green. Classes that were later
+  deleted can't be drawn (they aren't in today's layout) and are counted instead. Saved in
+  `~/.valence/timelines/`; Timeline ▸ Show Timeline reopens it.
+* **File ▸ Take Snapshot** saves the current graph to `~/.valence/snapshots/`. After the code
+  changes, File ▸ Re-analyze and **View ▸ Compare With Snapshot**: added classes turn green, changed
+  ones amber, the rest dim, and the inspector lists added, changed and removed classes.
 * **G**: play the **game loop**: every `_Process` / `_PhysicsProcess` / `_Draw`, tick after tick.
 * **Simulate ▸ Play Trigger**: startup, input, event handlers, web requests…
 * Space pauses/resumes, Simulate ▸ Speed changes pace, Esc stops. Classes heat up as the flow

@@ -24,6 +24,16 @@ public partial class Hud : Control
     private const int ViewLegend = 24;
     private const int ViewMethods = 25;
     private const int ViewShowAll = 26;
+    private const int ViewStopCompare = 27;
+    private const int FileSnapshot = 4;
+    private const int TimelineBuild10 = 110;
+    private const int TimelineBuild25 = 111;
+    private const int TimelineBuild50 = 112;
+    private const int TimelineShow = 113;
+    private const int TimelineHide = 114;
+    private const int CompareBase = 2000;
+
+    private static readonly float[] Brightnesses = { 0.25f, 0.5f, 0.75f, 1f, 1.25f };
 
     private static readonly float[] QuietFades = { 0.05f, 0.1f, 0.15f, 0.25f, 0.4f };
     private const int NavigateFind = 40;
@@ -81,6 +91,14 @@ public partial class Hud : Control
     private PanelResizer? _outlineResizer;
     private PanelResizer? _rightResizer;
     private PopupMenu? _untouchedMenu;
+    private PopupMenu? _brightnessMenu;
+    private PopupMenu? _compareMenu;
+    private readonly List<string> _snapshotPaths = new();
+    private PanelContainer? _timelineBar;
+    private HSlider? _timelineSlider;
+    private Label? _timelineLabel;
+    private Button? _timelinePlay;
+    private bool _suppressTimelineSlider;
     private const float MinPanelWidth = 180f;
     private const float MaxPanelWidth = 900f;
     public ProgressOverlay Progress { get; } = new();
@@ -107,6 +125,15 @@ public partial class Hud : Control
     public event Action<float>? QuietFadeChanged;
     public event Action? ShowAllRequested;
     public event Action<UntouchedMode>? UntouchedModeChanged;
+    public event Action<float>? BrightnessChanged;
+    public event Action? SnapshotRequested;
+    public event Action<string>? CompareRequested;
+    public event Action? StopCompareRequested;
+    public event Action<int>? TimelineBuildRequested;
+    public event Action? TimelineShowRequested;
+    public event Action? TimelineHideRequested;
+    public event Action<int>? TimelineFrameChanged;
+    public event Action? TimelinePlayToggled;
 
     /// <summary>Outline width, right column width (after a border drag).</summary>
     public event Action<float, float>? PanelWidthsChanged;
@@ -185,6 +212,7 @@ public partial class Hud : Control
         _rightColumn.AddChild(_inspector!);
         UpdateRightColumn();
 
+        root.AddChild(BuildTimelineBar());
         root.AddChild(BuildStatusBar());
 
         BuildTooltip();
@@ -271,6 +299,117 @@ public partial class Hud : Control
         if (_simulateMenu == null) return;
         var index = _simulateMenu.GetItemIndex(SimPause);
         if (index >= 0) _simulateMenu.SetItemText(index, active && !playing ? "Resume" : "Pause");
+    }
+
+    public void SetBrightness(float brightness)
+    {
+        if (_brightnessMenu == null) return;
+        var closest = 0;
+        for (var i = 1; i < Brightnesses.Length; i++)
+        {
+            if (Mathf.Abs(Brightnesses[i] - brightness) < Mathf.Abs(Brightnesses[closest] - brightness)) closest = i;
+        }
+        for (var i = 0; i < Brightnesses.Length; i++) _brightnessMenu.SetItemChecked(i, i == closest);
+    }
+
+    /// <summary>Fills View ▸ Compare With Snapshot (newest first).</summary>
+    public void SetSnapshots(IEnumerable<(string Label, string Path)> snapshots)
+    {
+        _snapshotPaths.Clear();
+        if (_compareMenu == null) return;
+        _compareMenu.Clear();
+        foreach (var (label, path) in snapshots)
+        {
+            _compareMenu.AddItem(label, CompareBase + _snapshotPaths.Count);
+            _snapshotPaths.Add(path);
+        }
+        if (_snapshotPaths.Count == 0)
+        {
+            _compareMenu.AddItem("(no snapshots yet: File ▸ Take Snapshot)", CompareBase - 1);
+            _compareMenu.SetItemDisabled(0, true);
+        }
+    }
+
+    public void SetCompareActive(bool active) => SetDisabled(_viewMenu, ViewStopCompare, !active);
+
+    public void ShowTimeline(int frames)
+    {
+        if (_timelineBar == null || _timelineSlider == null) return;
+        _suppressTimelineSlider = true;
+        _timelineSlider.MaxValue = Math.Max(0, frames - 1);
+        _suppressTimelineSlider = false;
+        _timelineBar.Visible = true;
+    }
+
+    public void HideTimeline()
+    {
+        if (_timelineBar != null) _timelineBar.Visible = false;
+    }
+
+    public void SetTimelineFrame(int index, string label)
+    {
+        if (_timelineSlider != null)
+        {
+            _suppressTimelineSlider = true;
+            _timelineSlider.Value = index;
+            _suppressTimelineSlider = false;
+        }
+        if (_timelineLabel != null) _timelineLabel.Text = label;
+    }
+
+    public void SetTimelinePlaying(bool playing)
+    {
+        if (_timelinePlay != null) _timelinePlay.Text = playing ? "❚❚" : "▶";
+    }
+
+    private void OnCompare(int id)
+    {
+        var index = id - CompareBase;
+        if (index >= 0 && index < _snapshotPaths.Count) CompareRequested?.Invoke(_snapshotPaths[index]);
+    }
+
+    private Control BuildTimelineBar()
+    {
+        _timelineBar = new PanelContainer { Visible = false };
+        _timelineBar.AddThemeStyleboxOverride("panel", PanelStyle(0.96f, 0, 6f, borderTop: 2));
+        _timelineBar.MouseEntered += () => PointerEnteredUi?.Invoke();
+
+        var row = new HBoxContainer();
+        row.AddThemeConstantOverride("separation", 10);
+        _timelineBar.AddChild(row);
+
+        var title = new Label { Text = "Timeline", VerticalAlignment = VerticalAlignment.Center };
+        title.AddThemeColorOverride("font_color", Palette.Accent);
+        row.AddChild(title);
+
+        _timelinePlay = new Button { Text = "▶", Flat = true, TooltipText = "Play through history", CustomMinimumSize = new Vector2(32f, 0f) };
+        _timelinePlay.Pressed += () => TimelinePlayToggled?.Invoke();
+        row.AddChild(_timelinePlay);
+
+        _timelineSlider = new HSlider
+        {
+            MinValue = 0,
+            MaxValue = 0,
+            Step = 1,
+            TickCount = 0,
+            SizeFlagsHorizontal = SizeFlags.ExpandFill,
+            SizeFlagsVertical = SizeFlags.ShrinkCenter,
+            CustomMinimumSize = new Vector2(240f, 0f),
+        };
+        _timelineSlider.ValueChanged += value =>
+        {
+            if (!_suppressTimelineSlider) TimelineFrameChanged?.Invoke((int)Math.Round(value));
+        };
+        row.AddChild(_timelineSlider);
+
+        _timelineLabel = new Label { ClipText = true, CustomMinimumSize = new Vector2(460f, 0f), VerticalAlignment = VerticalAlignment.Center };
+        _timelineLabel.AddThemeFontSizeOverride("font_size", 12);
+        row.AddChild(_timelineLabel);
+
+        var close = new Button { Text = "✕", Flat = true, TooltipText = "Hide the timeline (back to the current code)" };
+        close.Pressed += () => TimelineHideRequested?.Invoke();
+        row.AddChild(close);
+        return _timelineBar;
     }
 
     public void SetUntouchedMode(UntouchedMode mode)
@@ -398,6 +537,7 @@ public partial class Hud : Control
         _fileMenu.AddSubmenuNodeItem("Open Recent", _recentMenu);
         _fileMenu.AddSeparator();
         _fileMenu.AddItem("Re-analyze", FileReanalyze);
+        _fileMenu.AddItem("Take Snapshot (to compare later)", FileSnapshot);
         SetShortcut(_fileMenu, FileReanalyze, Key.R);
         _fileMenu.AddSeparator();
         _fileMenu.AddItem("Quit", FileQuit);
@@ -434,6 +574,19 @@ public partial class Hud : Control
         };
         _viewMenu.AddSubmenuNodeItem("Quiet Fade", _fadeMenu);
         _viewMenu.AddItem("Show Everything (clear hide/quiet)", ViewShowAll);
+        _brightnessMenu = new PopupMenu { Name = "Brightness" };
+        for (var i = 0; i < Brightnesses.Length; i++) _brightnessMenu.AddRadioCheckItem($"{Brightnesses[i] * 100:0}%", i);
+        _brightnessMenu.IdPressed += id =>
+        {
+            SetBrightness(Brightnesses[(int)id]);
+            BrightnessChanged?.Invoke(Brightnesses[(int)id]);
+        };
+        _viewMenu.AddSubmenuNodeItem("Brightness", _brightnessMenu);
+        _viewMenu.AddSeparator();
+        _compareMenu = new PopupMenu { Name = "CompareWith" };
+        _compareMenu.IdPressed += id => OnCompare((int)id);
+        _viewMenu.AddSubmenuNodeItem("Compare With Snapshot", _compareMenu);
+        _viewMenu.AddItem("Stop Comparing", ViewStopCompare);
         _viewMenu.AddSeparator();
         _viewMenu.AddCheckItem("Outline", ViewOutline);
         _viewMenu.AddCheckItem("Methods", ViewMethods);
@@ -484,6 +637,16 @@ public partial class Hud : Control
         _simulateMenu.AddSubmenuNodeItem("Untouched (H)", _untouchedMenu);
         _simulateMenu.IdPressed += id => OnMenu((int)id);
         menus.AddChild(_simulateMenu);
+
+        var timeline = new PopupMenu { Name = "Timeline" };
+        timeline.AddItem("Build Timeline: 10 commits", TimelineBuild10);
+        timeline.AddItem("Build Timeline: 25 commits", TimelineBuild25);
+        timeline.AddItem("Build Timeline: 50 commits", TimelineBuild50);
+        timeline.AddSeparator();
+        timeline.AddItem("Show Timeline", TimelineShow);
+        timeline.AddItem("Hide Timeline", TimelineHide);
+        timeline.IdPressed += id => OnMenu((int)id);
+        menus.AddChild(timeline);
 
         var help = new PopupMenu { Name = "Help" };
         help.AddItem("Controls", HelpControls);
@@ -674,6 +837,27 @@ public partial class Hud : Control
                 break;
             case FileOpenGraph:
                 PopupOpenGraph();
+                break;
+            case FileSnapshot:
+                SnapshotRequested?.Invoke();
+                break;
+            case ViewStopCompare:
+                StopCompareRequested?.Invoke();
+                break;
+            case TimelineBuild10:
+                TimelineBuildRequested?.Invoke(10);
+                break;
+            case TimelineBuild25:
+                TimelineBuildRequested?.Invoke(25);
+                break;
+            case TimelineBuild50:
+                TimelineBuildRequested?.Invoke(50);
+                break;
+            case TimelineShow:
+                TimelineShowRequested?.Invoke();
+                break;
+            case TimelineHide:
+                TimelineHideRequested?.Invoke();
                 break;
             case FileReanalyze:
                 ReanalyzeRequested?.Invoke();

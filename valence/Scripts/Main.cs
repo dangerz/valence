@@ -67,6 +67,20 @@ public partial class Main : Node3D
     private float _quietFade = 0.15f;
     private UntouchedMode _untouched = UntouchedMode.Show;
     private HashSet<string> _favorites = new(StringComparer.Ordinal);
+    private Godot.Environment? _environment;
+    private float _brightness = 0.75f;
+
+    // Snapshot comparison (View ▸ Compare With): added/changed classes vs a saved snapshot.
+    private Comparison? _comparison;
+
+    // Git timeline: the frame being shown, which classes exist in it, and which are new since the previous frame.
+    private Timeline? _timeline;
+    private int _timelineIndex;
+    private HashSet<string>? _timelinePresent;
+    private readonly HashSet<string> _timelineNew = new(StringComparer.Ordinal);
+    private bool _timelinePlaying;
+    private float _timelineTimer;
+    private const float TimelineStepSeconds = 0.7f;
     private Dictionary<string, Vector2> _pins = new();
     private ColorMode _colorMode = ColorMode.Visibility;
     private int _linkDepth = 1;
@@ -120,6 +134,8 @@ public partial class Main : Node3D
         _hud.SetQuietFade(_quietFade);
         _untouched = _settings.Untouched;
         _hud.SetUntouchedMode(_untouched);
+        ApplyBrightness(Mathf.Clamp(_settings.Brightness, 0.1f, 2f));
+        _hud.SetBrightness(_brightness);
 
         var startup = StartupGraph();
         GD.Print($"[valence] viewer ready; loading {startup}");
@@ -135,6 +151,17 @@ public partial class Main : Node3D
             _openAmount = Mathf.MoveToward(_openAmount, _openTarget, (float)delta * OpenSpeed);
             ApplyOpenAmount();
             if (_openAmount <= 0f && _openTarget <= 0f) FinishClosing();
+        }
+
+        if (_timelinePlaying && _timeline != null)
+        {
+            _timelineTimer += (float)delta;
+            if (_timelineTimer >= TimelineStepSeconds)
+            {
+                _timelineTimer = 0f;
+                if (_timelineIndex >= _timeline.Frames.Count - 1) ToggleTimelinePlay();
+                else ShowTimelineFrame(_timelineIndex + 1, pause: false);
+            }
         }
 
         if (_simulation is { Active: true })
@@ -223,6 +250,20 @@ public partial class Main : Node3D
         };
         _hud.IncludeDataChanged += on => _includeData = on;
         _hud.UntouchedModeChanged += SetUntouchedMode;
+        _hud.BrightnessChanged += brightness =>
+        {
+            ApplyBrightness(brightness);
+            _settings.Brightness = brightness;
+            _settings.Save();
+        };
+        _hud.SnapshotRequested += TakeSnapshot;
+        _hud.CompareRequested += StartCompare;
+        _hud.StopCompareRequested += StopCompare;
+        _hud.TimelineBuildRequested += BuildTimeline;
+        _hud.TimelineShowRequested += LoadTimeline;
+        _hud.TimelineHideRequested += HideTimeline;
+        _hud.TimelineFrameChanged += index => ShowTimelineFrame(index, pause: true);
+        _hud.TimelinePlayToggled += ToggleTimelinePlay;
         _hud.PanelWidthsChanged += (outline, right) =>
         {
             _settings.OutlineWidth = outline;
@@ -260,6 +301,12 @@ public partial class Main : Node3D
 
         StopSimulation();
         ClearSelection();
+        _comparison = null;
+        _timeline = null;
+        _timelinePresent = null;
+        _timelinePlaying = false;
+        _hud.HideTimeline();
+        _hud.SetCompareActive(false);
         _opened = null;
         _openAmount = _openTarget = 0f;
         _flowGraph = null;
@@ -334,6 +381,7 @@ public partial class Main : Node3D
 
         _visibility = VisibilityStore.Load(graph.Repo.Root);
         _favorites = FavoritesStore.Load(graph.Repo.Root);
+        _hud.SetSnapshots(SnapshotStore.List(graph.Repo.Root));
         _hud.Outline.SetModel(_model, StateOf, _favorites);
         UpdateLegend();
         ApplyVisibility();
@@ -441,12 +489,29 @@ public partial class Main : Node3D
             GlowIntensity = 0.9f,
             GlowBloom = 0.08f,
         };
+        _environment = environment;
         AddChild(new WorldEnvironment { Environment = environment });
         AddChild(new DirectionalLight3D
         {
             LightEnergy = 0.9f,
             RotationDegrees = new Vector3(-50f, 35f, 0f),
         });
+    }
+
+    /// <summary>View ▸ Brightness: scales atom clouds, bonds, electrons, nucleon emission and bloom together.</summary>
+    private void ApplyBrightness(float brightness)
+    {
+        _brightness = brightness;
+        if (_environment != null)
+        {
+            _environment.GlowIntensity = 0.9f * brightness;
+            _environment.GlowBloom = 0.08f * brightness;
+        }
+        _assets.CloudMaterial.SetShaderParameter("brightness", brightness);
+        _assets.BondMaterial.SetShaderParameter("brightness", brightness);
+        _assets.NucleonMaterial.SetShaderParameter("glow_strength", 2.6f * brightness);
+        _assets.NucleonMaterial.SetShaderParameter("rim_strength", 0.35f * brightness);
+        _assets.ElectronMaterial.EmissionEnergyMultiplier = 3f * brightness;
     }
 
     // ---------------------------------------------------------------- selection
@@ -713,6 +778,178 @@ public partial class Main : Node3D
         ApplyVisibility();
     }
 
+    // ---------------------------------------------------------------- snapshots & compare
+
+    private void TakeSnapshot()
+    {
+        if (_model == null) return;
+        var path = SnapshotStore.Save(_model.Graph);
+        _hud.SetSnapshots(SnapshotStore.List(_model.Graph.Repo.Root));
+        _hud.SetStatus($"Snapshot saved ({SnapshotStore.LabelFor(path)}). Later: File ▸ Re-analyze, then View ▸ Compare With Snapshot.");
+    }
+
+    private void StartCompare(string path)
+    {
+        if (_model == null) return;
+        Graph snapshot;
+        try
+        {
+            snapshot = GraphIO.Load(path);
+        }
+        catch (Exception e)
+        {
+            _hud.SetStatus($"Could not open snapshot: {e.Message}");
+            return;
+        }
+        _comparison = Comparison.Build(snapshot, _model, SnapshotStore.LabelFor(path));
+        _hud.SetCompareActive(true);
+        _hud.ShowInfo(InfoText.ForComparison(_comparison, _model));
+        _hud.SetStatus($"Comparing with {_comparison.Label}: {_comparison.Added.Count} added, " +
+                       $"{_comparison.Changed.Count} changed, {_comparison.Removed.Count} removed");
+        ApplyColors();
+    }
+
+    private void StopCompare()
+    {
+        _comparison = null;
+        _hud.SetCompareActive(false);
+        ShowSummary();
+        ApplyColors();
+    }
+
+    // ---------------------------------------------------------------- git timeline
+
+    private void BuildTimeline(int samples)
+    {
+        var root = _model?.Graph.Repo.Root;
+        if (string.IsNullOrEmpty(root) || !Directory.Exists(root))
+        {
+            _hud.SetStatus("Open a source folder first: the timeline is built from its git history.");
+            return;
+        }
+        if (_analysis != null)
+        {
+            _hud.SetStatus("An analysis is already running…");
+            return;
+        }
+
+        var cancellation = new CancellationTokenSource();
+        _analysis = cancellation;
+        _hud.Progress.Begin($"Building timeline: {samples} commits of {Path.GetFileName(root)} (read-only)");
+        var context = new AnalysisContext(
+            line => _mainThread.Enqueue(() =>
+            {
+                _hud.Progress.AppendLog(line);
+                GD.Print($"[valence] {line}");
+            }),
+            progress => _mainThread.Enqueue(() => _hud.Progress.SetProgress(progress)),
+            cancellation.Token);
+
+        Task.Run(() => AnalyzerLauncher.BuildTimeline(root, samples, context), cancellation.Token)
+            .ContinueWith(task =>
+            {
+                var path = task.IsCompletedSuccessfully ? task.Result : null;
+                var error = task.Exception?.GetBaseException();
+                var cancelled = task.IsCanceled || error is OperationCanceledException;
+                _mainThread.Enqueue(() =>
+                {
+                    _analysis = null;
+                    cancellation.Dispose();
+                    if (path != null)
+                    {
+                        _hud.Progress.Finish();
+                        LoadTimeline();
+                    }
+                    else if (cancelled)
+                    {
+                        _hud.Progress.Finish();
+                        _hud.SetStatus("Timeline cancelled.");
+                    }
+                    else
+                    {
+                        _hud.Progress.Fail(error?.Message ?? "unknown error");
+                        GD.PushError($"[valence] timeline for {root} failed: {error}");
+                    }
+                });
+            });
+    }
+
+    private void LoadTimeline()
+    {
+        var root = _model?.Graph.Repo.Root;
+        if (string.IsNullOrEmpty(root)) return;
+        var path = TimelineBuilder.DefaultPath(root);
+        if (!File.Exists(path))
+        {
+            _hud.SetStatus("No timeline yet for this repo: Timeline ▸ Build Timeline.");
+            return;
+        }
+        try
+        {
+            _timeline = ValenceJson.Read<Timeline>(path);
+        }
+        catch (Exception e)
+        {
+            _hud.SetStatus($"Could not read the timeline: {e.Message}");
+            return;
+        }
+        if (_timeline.Frames.Count == 0)
+        {
+            _timeline = null;
+            _hud.SetStatus("The timeline has no commits.");
+            return;
+        }
+        _hud.ShowTimeline(_timeline.Frames.Count);
+        ShowTimelineFrame(_timeline.Frames.Count - 1, pause: true);
+    }
+
+    private void ShowTimelineFrame(int index, bool pause)
+    {
+        if (_timeline == null || _model == null) return;
+        if (pause && _timelinePlaying) ToggleTimelinePlay();
+        index = Math.Clamp(index, 0, _timeline.Frames.Count - 1);
+        _timelineIndex = index;
+        var frame = _timeline.Frames[index];
+        _timelinePresent = new HashSet<string>(frame.Nodes.Keys, StringComparer.Ordinal);
+
+        _timelineNew.Clear();
+        var previous = index > 0 ? _timeline.Frames[index - 1].Nodes : null;
+        foreach (var id in frame.Nodes.Keys)
+        {
+            if (previous == null || !previous.ContainsKey(id)) _timelineNew.Add(id);
+        }
+        var removed = previous?.Keys.Count(id => !frame.Nodes.ContainsKey(id)) ?? 0;
+        var missing = frame.Nodes.Keys.Count(id => !_model.Nodes.ContainsKey(id));
+
+        ApplyVisibility();
+        var commit = frame.Commit.Length >= 7 ? frame.Commit[..7] : frame.Commit;
+        var label = $"{index + 1}/{_timeline.Frames.Count} · {frame.Date.ToLocalTime():yyyy-MM-dd} · {commit} · {frame.Subject} · " +
+                    $"{frame.Nodes.Count} classes (+{(previous == null ? frame.Nodes.Count : _timelineNew.Count)} −{removed})" +
+                    (missing > 0 ? $" · {missing} since deleted (not drawn)" : "");
+        _hud.SetTimelineFrame(index, label);
+    }
+
+    private void ToggleTimelinePlay()
+    {
+        if (_timeline == null) return;
+        _timelinePlaying = !_timelinePlaying;
+        _timelineTimer = 0f;
+        // Playing from the end starts over from the first commit.
+        if (_timelinePlaying && _timelineIndex >= _timeline.Frames.Count - 1) ShowTimelineFrame(0, pause: false);
+        _hud.SetTimelinePlaying(_timelinePlaying);
+    }
+
+    private void HideTimeline()
+    {
+        _timeline = null;
+        _timelinePresent = null;
+        _timelineNew.Clear();
+        _timelinePlaying = false;
+        _hud.SetTimelinePlaying(false);
+        _hud.HideTimeline();
+        ApplyVisibility();
+    }
+
     /// <summary>Outline right-click ▸ Add/Remove from Favorites; saved per repo.</summary>
     private void ToggleFavorite(string key, bool favorite)
     {
@@ -777,13 +1014,17 @@ public partial class Main : Node3D
             foreach (var atom in molecule.Atoms)
             {
                 var atomState = Most(moleculeState, StateOf("atom:" + atom.Id));
+                // Timeline: only classes that existed at the shown commit (and their systems) are drawn.
+                var present = _timelinePresent;
+                var atomExists = present == null || atom.Nodes.Any(n => present.Contains(n.Info.Id));
                 atom.UserOpacity = OpacityOf(atomState);
-                atom.Opacity = atom.UserOpacity * UntouchedFactor(_revealedAtoms.Contains(atom));
+                atom.Opacity = atom.UserOpacity * UntouchedFactor(_revealedAtoms.Contains(atom)) * (atomExists ? 1f : 0f);
                 atom.View?.SetOpacity(atom.Opacity);
                 foreach (var node in atom.Nodes)
                 {
+                    var exists = present == null || present.Contains(node.Info.Id);
                     node.UserOpacity = OpacityOf(Most(atomState, StateOf("node:" + node.Info.Id)));
-                    node.Opacity = node.UserOpacity * UntouchedFactor(_heat.ContainsKey(node));
+                    node.Opacity = node.UserOpacity * UntouchedFactor(_heat.ContainsKey(node)) * (exists ? 1f : 0f);
                 }
             }
         }
@@ -1002,6 +1243,22 @@ public partial class Main : Node3D
                 glow *= 0.1f;
             }
             return new Color(color.R, color.G, color.B, glow);
+        }
+
+        // Compare: added green, changed amber, unchanged dimmed.
+        if (_comparison != null && node != _anchor)
+        {
+            var id = node.Info.Id;
+            if (_comparison.Added.Contains(id)) return new Color(Palette.Added.R, Palette.Added.G, Palette.Added.B, 0.8f);
+            if (_comparison.Changed.Contains(id)) return new Color(Palette.Changed.R, Palette.Changed.G, Palette.Changed.B, 0.5f);
+            color = color.Darkened(0.6f);
+            return new Color(color.R, color.G, color.B, 0f);
+        }
+
+        // Timeline: classes new in the shown commit glow green.
+        if (_timelinePresent != null && _timelineNew.Contains(node.Info.Id) && node != _anchor)
+        {
+            return new Color(Palette.Added.R, Palette.Added.G, Palette.Added.B, 1f);
         }
 
         if (_anchor != null)

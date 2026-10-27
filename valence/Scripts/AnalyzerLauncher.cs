@@ -41,6 +41,22 @@ public static class AnalyzerLauncher
         return outPath;
     }
 
+    /// <summary>
+    /// Builds a git timeline (sampled commits exported to a temp folder and analyzed) and saves it to
+    /// ~/.valence/timelines. Blocking: call from a worker thread.
+    /// </summary>
+    public static string BuildTimeline(string sourceFolder, int samples, AnalysisContext context)
+    {
+        var options = new AnalyzeOptions();
+        var external = ProbeRegistry.Discover(ProbeRegistry.SearchPaths(ExtraProbeDirs()), context.Log);
+        var probes = RepoAnalyzer.Combine(new IProbe[] { new CSharpProbe() }, external, options);
+        var timeline = TimelineBuilder.Build(sourceFolder, probes, samples, context);
+        var path = TimelineBuilder.DefaultPath(timeline.Root);
+        ValenceJson.Write(path, timeline);
+        context.Log($"saved {path}");
+        return path;
+    }
+
     /// <summary>Probes published by build.sh, if any (other languages later).</summary>
     private static IEnumerable<string> ExtraProbeDirs()
     {

@@ -217,6 +217,9 @@ public sealed class ViewerSettings
 
     public UntouchedMode Untouched { get; set; } = UntouchedMode.Show;
 
+    /// <summary>View ▸ Brightness, 0.25..1.25.</summary>
+    public float Brightness { get; set; } = 0.75f;
+
     /// <summary>Side panel widths in pixels (dragged at their borders).</summary>
     public float OutlineWidth { get; set; } = 300f;
     public float RightWidth { get; set; } = 400f;
