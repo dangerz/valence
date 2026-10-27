@@ -27,6 +27,9 @@ public static class Palette
     /// <summary>Simulation: a class the flow just reached.</summary>
     public static readonly Color Gold = Hex(0xffc83d);
 
+    /// <summary>The opened system's bonds, ports and connected systems.</summary>
+    public static readonly Color Connection = Hex(0xffe066);
+
     /// <summary>Compare / timeline: added since the snapshot or previous commit.</summary>
     public static readonly Color Added = Hex(0x51cf66);
 

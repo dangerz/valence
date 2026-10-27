@@ -87,7 +87,8 @@ public partial class BondRenderer : Node3D
     {
         if (bond.Mesh == null) return;
         var touchesFocus = focus == null || bond.A == focus || bond.B == focus;
-        var color = bond.Covalent ? Palette.Covalent : Palette.Ionic;
+        // The opened system's connections turn yellow.
+        var color = focus != null && touchesFocus ? Palette.Connection : bond.Covalent ? Palette.Covalent : Palette.Ionic;
         // Hidden systems take their bonds with them; quiet ones fade them.
         var opacity = Mathf.Min(bond.A.Opacity, bond.B.Opacity);
         color.A = (touchesFocus ? 1f : 0.15f) * opacity;

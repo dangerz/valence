@@ -1090,7 +1090,9 @@ public partial class Main : Node3D
 
         foreach (var atom in _model.AtomList)
         {
-            atom.View?.SetState(atom == _focusAtom, _focusAtom != null && atom != _focusAtom);
+            // The opened system's connections glow yellow; everything else dims.
+            var connected = _focusAtom != null && _focusAtom.Neighbors.Contains(atom);
+            atom.View?.SetState(atom == _focusAtom, _focusAtom != null && atom != _focusAtom && !connected, connected);
         }
         _bonds?.SetFocus(_focusAtom);
         ApplyLabels();
@@ -1299,7 +1301,7 @@ public partial class Main : Node3D
                 glow *= 0.15f;
             }
         }
-        else if (_focusAtom != null && node.Atom != _focusAtom)
+        else if (_focusAtom != null && node.Atom != _focusAtom && !_focusAtom.Neighbors.Contains(node.Atom))
         {
             color = color.Darkened(0.65f);
             glow *= 0.2f;

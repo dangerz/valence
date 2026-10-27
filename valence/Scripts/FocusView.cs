@@ -64,7 +64,7 @@ public partial class FocusView : Node3D
             var text = outgoing > 0 && incoming > 0 ? $"⇄ {other.ShortName}  {outgoing} out · {incoming} in"
                 : outgoing > 0 ? $"→ {other.ShortName}  ×{outgoing}"
                 : $"← {other.ShortName}  ×{incoming}";
-            var color = bond.Covalent ? Palette.Covalent : Palette.Ionic;
+            var color = Palette.Connection; // the opened system's connections are yellow
             var port = new PortData(other, bond, text)
             {
                 Mesh = new MeshInstance3D

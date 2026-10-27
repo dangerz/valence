@@ -23,6 +23,7 @@ public partial class AtomView : Node3D
     private float _expansion;
     private bool _focused;
     private bool _dimmed;
+    private bool _connected;
     private bool _labelNearMouse = true;
     private Color _labelBase = Colors.White;
 
@@ -106,14 +107,21 @@ public partial class AtomView : Node3D
 
     /// <param name="focused">This system is the current focus.</param>
     /// <param name="dimmed">Another system is focused.</param>
-    public void SetState(bool focused, bool dimmed)
+    /// <param name="connected">Bonded to the focused system: glows yellow.</param>
+    public void SetState(bool focused, bool dimmed, bool connected = false)
     {
         _focused = focused;
         _dimmed = dimmed;
-        _cloud?.SetInstanceShaderParameter("highlight", focused ? 1f : 0f);
+        _connected = connected;
+        _cloud?.SetInstanceShaderParameter("highlight", focused ? 1f : connected ? 0.6f : 0f);
+        var cloud = connected ? Palette.Connection : _tint;
+        _cloud?.SetInstanceShaderParameter("cloud_color", new Color(cloud.R, cloud.G, cloud.B, _opacity));
         if (_label != null)
         {
-            _labelBase = focused ? Colors.White : dimmed ? _labelColor.Darkened(0.55f) : _labelColor;
+            _labelBase = focused ? Colors.White
+                : connected ? Palette.Connection
+                : dimmed ? _labelColor.Darkened(0.55f)
+                : _labelColor;
             ApplyLabelAlpha(_labelNearMouse && IsInsideTree() ? LabelProximity.Factor(GetViewport(), _label.GlobalPosition) : 1f);
         }
     }
@@ -131,9 +139,8 @@ public partial class AtomView : Node3D
     {
         _opacity = opacity;
         Visible = opacity > 0f;
-        _cloud?.SetInstanceShaderParameter("cloud_color", new Color(_tint.R, _tint.G, _tint.B, opacity));
         foreach (var orbit in _orbits) orbit.Visible = _expansion < 0.05f && opacity >= 1f;
-        SetState(_focused, _dimmed);
+        SetState(_focused, _dimmed, _connected); // also re-applies the cloud color with the new opacity
     }
 
     /// <summary>Camera distance under which the system's name shows (smaller for big graphs).</summary>
