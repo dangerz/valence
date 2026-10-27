@@ -137,6 +137,7 @@ public partial class Hud : Control
     private PanelContainer? _filterGutter;
     private PanelContainer? _timelineGutter;
     private PopupMenu? _filtersMenu;
+    private CheckBox? _hideUnrelated;
     private readonly Dictionary<ColorMode, Button> _tabs = new();
     private VBoxContainer? _summary;
     private Label? _summaryName;
@@ -185,6 +186,9 @@ public partial class Hud : Control
     public AxisGizmo Gizmo { get; } = new();
 
     public event Action<ViewTool>? ToolChanged;
+
+    /// <summary>The toolbar's Hide Unrelated checkbox (shown while something is selected).</summary>
+    public event Action<bool>? HideUnrelatedChanged;
 
     /// <summary>Zoom by this factor (&lt;1 = in), from the view's ▾ menu.</summary>
     public event Action<float>? ZoomStepRequested;
@@ -516,6 +520,12 @@ public partial class Hud : Control
 
     /// <summary>Stop Comparing and Only Show Differences only make sense while comparing.</summary>
     public void SetFullscreen(bool on) => SetChecked(_viewMenu, ViewFullscreen, on);
+
+    /// <summary>Hide Unrelated is only offered while a class or system is selected.</summary>
+    public void SetHasSelection(bool selected)
+    {
+        if (_hideUnrelated != null) _hideUnrelated.Visible = selected;
+    }
 
     public void SetCompareActive(bool active)
     {
@@ -999,6 +1009,24 @@ public partial class Hud : Control
         }
 
         row.AddChild(new VSeparator { CustomMinimumSize = new Vector2(16f, 0f) });
+
+        // Only offered while something is selected; its setting is kept between selections.
+        _hideUnrelated = new CheckBox
+        {
+            Text = "Hide Unrelated",
+            Visible = false,
+            FocusMode = FocusModeEnum.None,
+            CustomMinimumSize = new Vector2(0f, 34f),
+            TooltipText = "Hide everything the selection doesn't link to (View ▸ Link Depth sets how far)",
+        };
+        _hideUnrelated.AddThemeStyleboxOverride("normal", UiAssets.Box(Patch.Panel, 10f, 6f));
+        _hideUnrelated.AddThemeStyleboxOverride("hover", UiAssets.Box(Patch.Accent, 10f, 6f));
+        _hideUnrelated.AddThemeStyleboxOverride("pressed", UiAssets.Box(Patch.Active, 10f, 6f));
+        _hideUnrelated.AddThemeStyleboxOverride("hover_pressed", UiAssets.Box(Patch.Active, 10f, 6f));
+        _hideUnrelated.AddThemeColorOverride("font_pressed_color", Colors.White);
+        _hideUnrelated.AddThemeColorOverride("font_hover_pressed_color", Colors.White);
+        _hideUnrelated.Toggled += on => HideUnrelatedChanged?.Invoke(on);
+        row.AddChild(_hideUnrelated);
 
         var filters = new MenuButton
         {

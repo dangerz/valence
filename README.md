@@ -161,6 +161,8 @@ The viewer also accepts `-- --graph <file>` on the Godot command line.
 
 The toolbar above the 3D view switches lenses (**Structure**: public vs internal, **Changes**: git
 churn, **Dependencies**: coupling; the same as View ▸ Color By), opens **Filters** and **Fit view**.
+With a class or system selected, **Hide Unrelated** appears there too: everything the selection
+doesn't link to (within View ▸ Link Depth hops) is hidden until you turn it off.
 The buttons in the view's corner pick what a left-drag does: **select** (click selects, drag orbits),
 **orbit** (clicks don't select), **pan** or **zoom**; ▾ has zoom steps, fit and reset layout.
 

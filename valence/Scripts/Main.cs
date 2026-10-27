@@ -132,6 +132,10 @@ public partial class Main : Node3D
 
     // What a left-drag does (the tool buttons in the 3D view's corner).
     private ViewTool _tool = ViewTool.Select;
+
+    // Hide Unrelated (toolbar, shown while something is selected): hide everything the selection
+    // doesn't link to. Kept between selections; it does nothing without one.
+    private bool _hideUnrelated;
     private Vector2 _pressPosition;
     private AtomData? _dragAtom;
     private Vector3 _dragOffset;
@@ -223,6 +227,12 @@ public partial class Main : Node3D
         _hud.ReanalyzeRequested += Reanalyze;
         _hud.QuitRequested += () => GetTree().Quit();
         _hud.ToolChanged += tool => _tool = tool;
+        _hud.HideUnrelatedChanged += on =>
+        {
+            _hideUnrelated = on;
+            ApplyVisibility();
+            _hud.SetStatus(on ? "Hiding everything unrelated to the selection" : "Showing everything again");
+        };
         _hud.FullscreenToggled += () => ApplyFullscreen(!IsFullscreen(), save: true);
         _hud.ZoomStepRequested += factor => _camera.Zoom(factor);
         _hud.ColorModeChanged += mode =>
@@ -235,7 +245,7 @@ public partial class Main : Node3D
         _hud.LinkDepthChanged += depth =>
         {
             _linkDepth = depth;
-            RefreshSelection();
+            SelectionChanged();
         };
         _hud.FrameAllRequested += () => FrameAll(false);
         _hud.ResetLayoutRequested += ResetLayout;
@@ -245,7 +255,7 @@ public partial class Main : Node3D
         {
             if (on) _enabledKinds.Add(kind);
             else _enabledKinds.Remove(kind);
-            RefreshSelection();
+            SelectionChanged();
         };
         _hud.LinkClicked += OnLink;
         _hud.PanelsChanged += (outline, methods, inspector, legend) =>
@@ -580,7 +590,7 @@ public partial class Main : Node3D
         else _openTarget = 1f; // it may be mid-close
         _focusAtom = atom;
         _selectedNode = null;
-        RefreshSelection();
+        SelectionChanged();
         if (_model != null) _hud.ShowInfo(InfoText.ForAtom(atom, _model));
         _hud.Outline.Reveal("atom:" + atom.Id);
         _hud.SetSelection(atom.Name);
@@ -592,7 +602,7 @@ public partial class Main : Node3D
     {
         if (_focusAtom != node.Atom) FocusAtom(node.Atom, fly: false);
         _selectedNode = node;
-        RefreshSelection();
+        SelectionChanged();
         if (_model != null)
         {
             _hud.ShowInfo(InfoText.ForNode(node, _model));
@@ -609,10 +619,54 @@ public partial class Main : Node3D
         _focusAtom = null;
         _selectedNode = null;
         if (_opened != null) _openTarget = 0f;
-        RefreshSelection();
+        SelectionChanged();
         ShowSummary();
         _hud.Outline.Reveal("");
         _hud.SetSelection("");
+    }
+
+    /// <summary>
+    /// After the selection (or link depth / link kinds) changes: lights and labels follow it, and with
+    /// Hide Unrelated on, so does what's drawn at all.
+    /// </summary>
+    private void SelectionChanged()
+    {
+        _hud.SetHasSelection(_focusAtom != null || _selectedNode != null);
+        if (_hideUnrelated) ApplyVisibility();  // ends by refreshing the selection
+        else RefreshSelection();
+    }
+
+    /// <summary>
+    /// Hide Unrelated: the selected class and everything within Link Depth hops of it (over the
+    /// enabled link kinds), or with only a system open, its classes and those of the systems it bonds
+    /// with. Null when it's off or nothing is selected: hide nothing.
+    /// </summary>
+    private HashSet<NodeData>? RelatedToSelection()
+    {
+        if (!_hideUnrelated || _model == null) return null;
+        if (_selectedNode != null)
+        {
+            var related = new HashSet<NodeData> { _selectedNode };
+            var frontier = new List<NodeData> { _selectedNode };
+            for (var hop = 0; hop < _linkDepth && frontier.Count > 0; hop++)
+            {
+                var next = new List<NodeData>();
+                foreach (var node in frontier)
+                {
+                    foreach (var neighbor in _model.Neighbors(node, _enabledKinds))
+                    {
+                        if (related.Add(neighbor)) next.Add(neighbor);
+                    }
+                }
+                frontier = next;
+            }
+            return related;
+        }
+        if (_focusAtom != null)
+        {
+            return new HashSet<NodeData>(_focusAtom.Nodes.Concat(_focusAtom.Neighbors.SelectMany(a => a.Nodes)));
+        }
+        return null;
     }
 
     private void Back()
@@ -1109,6 +1163,7 @@ public partial class Main : Node3D
         };
         static Visibility Most(Visibility a, Visibility b) => (Visibility)Math.Max((int)a, (int)b);
 
+        var related = RelatedToSelection();
         foreach (var molecule in _model.Molecules)
         {
             var moleculeState = StateOf("molecule:" + molecule.Id);
@@ -1129,16 +1184,19 @@ public partial class Main : Node3D
                 var atomPassesUsage = atom.Nodes.Any(PassesUsageFilter);
                 // Only Show Differences: a system with no added or changed classes goes away too.
                 var atomDiffers = atom.Nodes.Any(ShowsAsDifference);
+                // Hide Unrelated: a system with no related classes goes away too.
+                var atomRelated = related == null || atom.Nodes.Any(related.Contains);
                 atom.UserOpacity = OpacityOf(atomState);
                 atom.Opacity = atom.UserOpacity * UntouchedFactor(_revealedAtoms.Contains(atom)) * (atomExists ? 1f : 0f)
-                               * UsageFactor(atomPassesUsage) * (atomDiffers ? 1f : 0f);
+                               * UsageFactor(atomPassesUsage) * (atomDiffers ? 1f : 0f) * (atomRelated ? 1f : 0f);
                 atom.View?.SetOpacity(atom.Opacity);
                 foreach (var node in atom.Nodes)
                 {
                     var exists = present == null || present.Contains(node.Info.Id);
                     node.UserOpacity = OpacityOf(Most(atomState, StateOf("node:" + node.Info.Id)));
                     node.Opacity = node.UserOpacity * UntouchedFactor(_heat.ContainsKey(node)) * (exists ? 1f : 0f)
-                                   * UsageFactor(PassesUsageFilter(node)) * (ShowsAsDifference(node) ? 1f : 0f);
+                                   * UsageFactor(PassesUsageFilter(node)) * (ShowsAsDifference(node) ? 1f : 0f)
+                                   * (related == null || related.Contains(node) ? 1f : 0f);
                 }
             }
         }
