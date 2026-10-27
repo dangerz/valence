@@ -1418,6 +1418,8 @@ public partial class Hud : Control
                 "It only reads the folder you point it at. Nothing is built, run or written there.",
                 HorizontalAlignment.Center, 13)
             .AddThemeColorOverride("font_color", Palette.MutedText);
+        _aboutDialog.AddText("By Roy El-Rayes and Claude", HorizontalAlignment.Center, 14)
+            .AddThemeColorOverride("font_color", UiKit.TitleColor);
         AddChild(_aboutDialog);
 
         Snapshots.BuildList();
