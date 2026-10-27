@@ -42,6 +42,17 @@ internal sealed class PythonExtractor
     private static readonly Regex CommandDecorator = new(@"^[\w.]+\.(?:command|group)(?:\(.*\))?$",
         RegexOptions.Compiled | RegexOptions.Singleline);
     private static readonly Regex FirstString = new(@"^\s*[rbuf]*[""'](?<text>[^""']*)[""']", RegexOptions.Compiled);
+    private static readonly Regex ReceiverDecorator = new(@"^(?:[\w.]+\.)?receiver\(.*\)$",
+        RegexOptions.Compiled | RegexOptions.Singleline);
+    private static readonly Regex StartupHookDecorator = new(@"^[\w.]+\.on_event\(\s*[""']startup[""']",
+        RegexOptions.Compiled);
+
+    // Games: a loop that pumps events or flips the display runs once per frame.
+    private static readonly Regex GameLoopCall = new(
+        @"\b(?:pygame|pg)\.(?:event\.(?:get|poll|wait)|display\.(?:flip|update))\s*\(|\bclock\.tick\s*\(",
+        RegexOptions.Compiled);
+    private static readonly Regex WindowBase = new(@"\b(?:arcade\.(?:Window|View)|pyglet\.window\.Window)\b", RegexOptions.Compiled);
+    private static readonly Regex SpriteBase = new(@"\bSprite\b", RegexOptions.Compiled);
 
     /// <summary>Builtins never resolve to repo code; skipping them keeps the use list small.</summary>
     private static readonly HashSet<string> Builtins = new(StringComparer.Ordinal)
@@ -71,6 +82,14 @@ internal sealed class PythonExtractor
     public void Extract(Node root)
     {
         WalkChildren(root, new Scope(_file, null, null), 0);
+
+        // Django management command: python manage.py <file name> runs Command.handle.
+        if (("/" + _file.Path).Contains("/management/commands/", StringComparison.Ordinal)
+            && _file.Classes.TryGetValue("Command", out var command)
+            && command.Methods.TryGetValue("handle", out var handle))
+        {
+            AddEntryPoint(handle.Member, Triggers.Startup, $"manage.py {Path.GetFileNameWithoutExtension(_file.Path)}");
+        }
 
         // Scripts (no classes, no functions) still show up; empty or class-only __init__.py files don't.
         if (_file.Node == null && _file.Classes.Count == 0 && !_file.IsPackage) _project.FileNode(_file);
@@ -110,6 +129,9 @@ internal sealed class PythonExtractor
                 break;
             case "if_statement" when scope.Function == null && scope.Class == null && IsMainGuard(node):
                 MainBlock(node, scope, depth);
+                break;
+            case "while_statement" when IsGameLoop(node):
+                GameLoop(node, scope, depth);
                 break;
             case "call":
                 Call(node, scope, depth);
@@ -244,6 +266,7 @@ internal sealed class PythonExtractor
         {
             if (EntryPoint(decorator, name) is { } entry) AddEntryPoint(member, entry.Trigger, entry.Label);
         }
+        foreach (var (trigger, label) in EngineCallbacks(cls, name)) AddEntryPoint(member, trigger, label);
 
         var fn = new PyFunction(member, owner, cls, _file)
         {
@@ -433,7 +456,116 @@ internal sealed class PythonExtractor
         }
         if (TaskDecorator.IsMatch(decorator)) return (Triggers.Job, $"task {name}");
         if (CommandDecorator.IsMatch(decorator)) return (Triggers.Startup, $"command {name}");
+        if (ReceiverDecorator.IsMatch(decorator)) return (Triggers.Event, $"{Shorten(decorator)} → {name}");
+        if (StartupHookDecorator.IsMatch(decorator)) return (Triggers.Startup, $"startup hook {name}");
         return null;
+    }
+
+    /// <summary>Methods a game engine calls by name: arcade/pyglet windows, sprites, Pygame Zero scripts.</summary>
+    private IEnumerable<(string Trigger, string Label)> EngineCallbacks(PyClass? cls, string name)
+    {
+        if (cls != null)
+        {
+            if (!cls.Node.Attributes.TryGetValue("bases", out var bases)) yield break;
+            if (WindowBase.IsMatch(bases))
+            {
+                var trigger = name switch
+                {
+                    "on_draw" => Triggers.Draw,
+                    "on_update" or "update" => Triggers.Frame,
+                    "on_key_press" or "on_key_release" or "on_mouse_press" or "on_mouse_release" or "on_mouse_motion"
+                        or "on_mouse_drag" or "on_mouse_scroll" or "on_text" => Triggers.Input,
+                    _ => null,
+                };
+                if (trigger != null) yield return (trigger, $"{cls.Node.Name}.{name}");
+            }
+            else if (name == "update" && SpriteBase.IsMatch(bases))
+            {
+                yield return (Triggers.Frame, $"{cls.Node.Name}.update (sprite group)");
+            }
+        }
+        else if (_file.Imports.ContainsKey("pgzrun") || _file.Imports.ContainsKey("pgzero"))
+        {
+            var trigger = name switch
+            {
+                "draw" => Triggers.Draw,
+                "update" => Triggers.Frame,
+                "on_key_down" or "on_key_up" or "on_mouse_down" or "on_mouse_up" or "on_mouse_move" => Triggers.Input,
+                _ => null,
+            };
+            if (trigger != null) yield return (trigger, $"{name} (Pygame Zero)");
+        }
+    }
+
+    private static bool IsGameLoop(Node node) =>
+        node.GetChildForField("body") is { } body && GameLoopCall.IsMatch(body.Text);
+
+    /// <summary>
+    /// A game's main loop: its body becomes a member that plays once per frame (a frame entry point),
+    /// entered from the enclosing function at the loop's position. It shares the enclosing locals.
+    /// </summary>
+    private void GameLoop(Node node, Scope scope, int depth)
+    {
+        var owner = scope.Function?.Owner ?? _project.FileNode(_file);
+        var where = scope.Function?.Member.Name ?? Path.GetFileName(_file.Path);
+        var condition = node.GetChildForField("condition");
+        var member = new MemberInfo
+        {
+            Id = MemberId(owner, where + " loop", Line(node)),
+            Name = $"{where} loop",
+            Kind = MemberKinds.Function,
+            Visibility = "public",
+            Signature = Collapse($"while {condition?.Text}:"),
+            File = _file.Path,
+            Line = Line(node),
+        };
+        owner.Members.Add(member);
+        AddEntryPoint(member, Triggers.Frame, $"game loop in {where}");
+
+        var loop = new PyFunction(member, owner, scope.Class, _file, scope.Function?.Locals ?? _file.Globals)
+        {
+            SelfParam = scope.Function?.SelfParam,
+            SelfIsClass = scope.Function?.SelfIsClass ?? false,
+        };
+        if (scope.Function != null) AddUse(UseKind.Enter, new Ref(null, member.Name, false), scope, node, member: member);
+        if (condition != null) Walk(condition, scope, depth + 1);
+        if (node.GetChildForField("body") is { } body) Walk(body, new Scope(_file, scope.Class, loop), depth + 1);
+        foreach (var (field, child) in node.Fields)
+        {
+            if (field == "alternative") Walk(child, scope, depth + 1);
+        }
+    }
+
+    /// <summary>
+    /// Framework wiring by call shape: Django url patterns, DRF routers, signal.connect(handler).
+    /// Resolved into entry points in pass 2.
+    /// </summary>
+    private void RecordWiring(Ref callee, Node arguments, Scope scope)
+    {
+        var positional = arguments.NamedChildren.Where(a => a.Type is not ("keyword_argument" or "comment")).ToList();
+        switch (callee.Name)
+        {
+            case "path" or "re_path" or "url"
+                when callee.Receiver == null && positional.Count >= 2 && positional[0].Type == "string"
+                     && RefOf(positional[1]) is { } view:
+                _file.Wirings.Add(new Wiring(WiringKind.Route, view, scope, $"{callee.Name} '{StringContent(positional[0])}'"));
+                break;
+            case "register"
+                when callee.Receiver != null && positional.Count >= 2 && positional[0].Type == "string"
+                     && RefOf(positional[1]) is { } viewSet:
+                _file.Wirings.Add(new Wiring(WiringKind.ViewSet, viewSet, scope, $"router '{StringContent(positional[0])}'"));
+                break;
+            case "connect"
+                when callee.Receiver != null && positional.Count >= 1 && RefOf(positional[0]) is { } handler:
+                _file.Wirings.Add(new Wiring(WiringKind.Connect, handler, scope, $"{callee.Receiver}.connect"));
+                break;
+        }
+    }
+
+    private static string Shorten(string text)
+    {
+        var collapsed = Collapse(text);
+        return collapsed.Length > 80 ? collapsed[..77] + "…" : collapsed;
     }
 
     private void AddEntryPoint(MemberInfo member, string trigger, string label)
@@ -548,8 +680,11 @@ internal sealed class PythonExtractor
     private void Call(Node node, Scope scope, int depth)
     {
         if (node.GetChildForField("function") is { } function) WalkChain(function, scope, depth + 1);
-        if (node.GetChildForField("arguments") is { } arguments) Walk(arguments, scope, depth + 1);
-        if (RefOf(node) is { } callee && !IsBuiltin(callee)) AddUse(UseKind.Call, callee, scope, node);
+        var arguments = node.GetChildForField("arguments");
+        if (arguments != null) Walk(arguments, scope, depth + 1);
+        if (RefOf(node) is not { } callee) return;
+        if (!IsBuiltin(callee)) AddUse(UseKind.Call, callee, scope, node);
+        if (arguments is { Type: "argument_list" }) RecordWiring(callee, arguments, scope);
     }
 
     /// <summary>A name or attribute chain read as a value (not the callee of a call).</summary>
@@ -755,9 +890,9 @@ internal sealed class PythonExtractor
         return owner.Members.Any(m => m.Id == id) ? id + "#" + line : id;
     }
 
-    private void AddUse(UseKind kind, Ref reference, Scope scope, Node at, NodeInfo? source = null)
+    private void AddUse(UseKind kind, Ref reference, Scope scope, Node at, NodeInfo? source = null, MemberInfo? member = null)
     {
-        _file.Uses.Add(new Use(kind, reference, scope, Line(at), source));
+        _file.Uses.Add(new Use(kind, reference, scope, Line(at), source, member));
         _stats.Uses++;
     }
 

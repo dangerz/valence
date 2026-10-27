@@ -8,9 +8,9 @@ chemistry:
 | On screen | In the code |
 |-----------|-------------|
 | **Molecule** | a project (top-level module) |
-| **Atom** | a system: a namespace (leaf module) |
-| **Proton** (red nucleon) | a public class/interface/struct |
-| **Neutron** (blue nucleon) | an internal/private type |
+| **Atom** | a system: a namespace (C#), a package or folder (Python) |
+| **Proton** (red nucleon) | a public class/interface/struct (Python: a class, or a file of free functions) |
+| **Neutron** (blue nucleon) | an internal/private type (Python: `_name` by convention) |
 | Nucleon size | lines of code |
 | **Electrons** | one per system this atom bonds with (its *valence*) |
 | **Ionic bond** (cyan) | one-way dependency; pulses flow from dependent → dependency |
@@ -92,14 +92,25 @@ Roadmap: [docs/ROADMAP.md](docs/ROADMAP.md).
 src/Valence.Schema/   shared JSON contract (C# model of the probe + graph formats)
 src/Valence.Core/     analysis engine: runs probes, merges, adds git churn (used by viewer + CLI)
 src/Valence.Cli/      `valence` command-line front end (optional)
+src/Valence.Syntax/   tree-sitter engine (bindings + bundled native grammars) for in-process probes
 probes/csharp/        C# probe (Roslyn): built in, and also runnable standalone
+probes/python/        Python probe (tree-sitter): built in
+tools/make_icon.py    rebuilds the app icon from the logo
 valence/              Godot 4.7 (.NET) viewer
 docs/plugin-protocol.md   how to write a probe for another language
 ```
 
-Languages are plugins ("probes"). C# is built in and runs in-process. Any other language is a
-separate program that speaks a small JSON protocol, so each can be written in whatever language
-parses its target best. See [docs/plugin-protocol.md](docs/plugin-protocol.md).
+Languages are plugins ("probes"). C# (Roslyn) and Python (tree-sitter) are built in and run
+in-process, with no language runtimes needed. Any other language can be a separate program that
+speaks a small JSON protocol, written in whatever language parses its target best. See
+[docs/plugin-protocol.md](docs/plugin-protocol.md).
+
+**Python** is resolved statically, the way Python looks names up: imports (relative, aliased,
+`__init__.py` re-exports), `self` fields, type hints and constructor calls. Bonds through an
+inferred type are marked "likely". Simulation entry points: `if __name__ == "__main__":`, routes
+(Flask, FastAPI, Django `urls.py`, DRF routers), signals (`@receiver`, `.connect(handler)`), Celery
+tasks, click/Typer commands, Django management commands, and game loops (pygame loops, arcade/pyglet
+windows, sprites, Pygame Zero).
 
 ## Quick start
 
@@ -128,6 +139,8 @@ The viewer also accepts `-- --graph <file>` on the Godot command line.
 
 ## Read-only guarantees
 
+* The Python probe only parses files (tree-sitter); it never imports or runs them, so no
+  `__pycache__` is written.
 * The C# probe never runs MSBuild/`dotnet restore` (which would write `obj/`). It parses `.csproj`
   files as XML and builds Roslyn compilations in memory. NuGet/Godot assemblies are read from the
   local NuGet cache if present, so external base types (e.g. `Node3D`) resolve.

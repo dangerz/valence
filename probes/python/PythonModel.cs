@@ -33,13 +33,32 @@ internal enum UseKind
 
     /// <summary>An attribute being assigned (<c>self.x = …</c>, <c>obj.count += 1</c>).</summary>
     Write,
+
+    /// <summary>Control enters <see cref="Use.Member"/> here (a game loop's body): a member link only.</summary>
+    Enter,
 }
+
+/// <summary>Framework wiring found by call shape, resolved into entry points in pass 2.</summary>
+internal enum WiringKind
+{
+    /// <summary>Django <c>path("x/", view)</c>, <c>re_path</c>, <c>url</c>: a function or class-based view.</summary>
+    Route,
+
+    /// <summary>Django REST framework <c>router.register("x", ViewSet)</c>.</summary>
+    ViewSet,
+
+    /// <summary><c>signal.connect(handler)</c>: Django signals, blinker, Qt signals.</summary>
+    Connect,
+}
+
+internal sealed record Wiring(WiringKind Kind, Ref Target, Scope Scope, string Label);
 
 /// <summary>
 /// One name use, with where it appears: the scope decides how names resolve and, unless
 /// <paramref name="Source"/> is given (a class's own bases), which nucleon the bond starts from.
+/// <paramref name="Member"/> is the target of an <see cref="UseKind.Enter"/>.
 /// </summary>
-internal sealed record Use(UseKind Kind, Ref Ref, Scope Scope, int Line, NodeInfo? Source = null);
+internal sealed record Use(UseKind Kind, Ref Ref, Scope Scope, int Line, NodeInfo? Source = null, MemberInfo? Member = null);
 
 /// <summary>
 /// Where code is: a file's top level, a class body, or a function (nested functions fold into theirs;
@@ -133,6 +152,8 @@ internal sealed class PyFile
 
     public List<Use> Uses { get; } = new();
 
+    public List<Wiring> Wirings { get; } = new();
+
     /// <summary>The package relative imports start from, as a repo path.</summary>
     public string PackageRepoPath =>
         IsPackage ? RepoPath : RepoPath.LastIndexOf('.') is var dot and >= 0 ? RepoPath[..dot] : "";
@@ -168,12 +189,15 @@ internal sealed class PyClass
 
 internal sealed class PyFunction
 {
-    public PyFunction(MemberInfo member, NodeInfo owner, PyClass? cls, PyFile file)
+    /// <param name="locals">Shared with the enclosing code, for a block that runs inside it (a game loop).</param>
+    public PyFunction(MemberInfo member, NodeInfo owner, PyClass? cls, PyFile file,
+        Dictionary<string, List<Binding>>? locals = null)
     {
         Member = member;
         Owner = owner;
         Class = cls;
         File = file;
+        Locals = locals ?? new Dictionary<string, List<Binding>>(StringComparer.Ordinal);
     }
 
     public MemberInfo Member { get; }
@@ -195,7 +219,7 @@ internal sealed class PyFunction
     public bool SelfIsClass { get; set; }
 
     /// <summary>Parameters and local variables, including those of nested functions.</summary>
-    public Dictionary<string, List<Binding>> Locals { get; } = new(StringComparer.Ordinal);
+    public Dictionary<string, List<Binding>> Locals { get; }
 }
 
 /// <summary>A module file or a package folder (with or without __init__.py).</summary>

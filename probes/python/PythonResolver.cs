@@ -10,7 +10,8 @@ internal sealed record ModuleValue(PyModule Module) : Value;
 
 internal sealed record ClassValue(PyClass Class) : Value;
 
-internal sealed record FunctionValue(PyFunction Function) : Value;
+/// <summary>A function or method; <see cref="Receiver"/> is the instance's class when called on one (dispatch).</summary>
+internal sealed record FunctionValue(PyFunction Function, PyClass? Receiver = null) : Value;
 
 /// <summary>An instance of a repo class (self, Foo(), a typed parameter or field).</summary>
 internal sealed record InstanceValue(PyClass Class) : Value;
@@ -32,6 +33,18 @@ internal sealed class PythonResolver
 {
     private const int MaxDepth = 32;
     private const int MaxBases = 64;
+    private const int MaxOverrides = 32;
+
+    // Methods a class-based view or viewset serves requests through (Django, DRF), else its hooks.
+    private static readonly string[] Handlers =
+    {
+        "get", "post", "put", "patch", "delete", "head", "options",
+        "list", "create", "retrieve", "update", "partial_update", "destroy",
+    };
+    private static readonly string[] HandlerHooks =
+    {
+        "dispatch", "get_queryset", "get_context_data", "form_valid", "get_object", "get_serializer_class",
+    };
 
     private readonly PythonProject _project;
     private readonly Dictionary<(PyFile, string), Resolved> _fileNames = new();
@@ -39,6 +52,7 @@ internal sealed class PythonResolver
     private readonly Dictionary<Binding, Resolved> _bindings = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<PyFunction, Resolved> _returns = new();
     private readonly Dictionary<PyClass, List<PyClass>> _mro = new();
+    private Dictionary<PyClass, List<PyClass>>? _subclasses;
 
     public PythonResolver(PythonProject project)
     {
@@ -76,6 +90,10 @@ internal sealed class PythonResolver
             context.Report(phase, i, files.Count, files[i].Path);
             foreach (var use in files[i].Uses) Apply(use);
         }
+        foreach (var file in files)
+        {
+            foreach (var wiring in file.Wirings) Wire(wiring);
+        }
         context.Report(phase, files.Count, files.Count);
     }
 
@@ -98,6 +116,16 @@ internal sealed class PythonResolver
 
     private void Apply(Use use)
     {
+        if (use.Kind == UseKind.Enter)
+        {
+            if (use.Scope.Function?.Member is { } enclosing && use.Member != null)
+            {
+                _project.AddMemberEdge(enclosing, use.Member, MemberEdgeKinds.Calls, use.Line, null);
+                Linked++;
+            }
+            return;
+        }
+
         if ((use.Source ?? use.Scope.Owner) is not { } source)
         {
             WithoutOwner++;
@@ -174,11 +202,121 @@ internal sealed class PythonResolver
             Bonded++;
         }
 
-        if (use.Scope.Function?.Member is { } caller && linkTo != null && linkKind != null && !ReferenceEquals(caller, linkTo))
+        if (use.Scope.Function?.Member is not { } caller || linkTo == null || linkKind == null) return;
+        if (!ReferenceEquals(caller, linkTo))
         {
             _project.AddMemberEdge(caller, linkTo, linkKind, use.Line, confidence);
             Linked++;
         }
+
+        // obj.save() on an instance may run a subclass's override: link each one, as "likely".
+        if (use.Kind == UseKind.Call && resolved.Value is FunctionValue { Receiver: { } receiver } dispatched)
+        {
+            foreach (var overriding in Overrides(receiver, dispatched.Function))
+            {
+                if (ReferenceEquals(caller, overriding.Member)) continue;
+                _project.AddMemberEdge(caller, overriding.Member, MemberEdgeKinds.Calls, use.Line, Confidence.Likely);
+                Linked++;
+            }
+        }
+    }
+
+    /// <summary>Methods of the same name in subclasses of the receiver's class (in the repo).</summary>
+    private IEnumerable<PyFunction> Overrides(PyClass receiver, PyFunction method)
+    {
+        _subclasses ??= IndexSubclasses();
+        if (!_subclasses.TryGetValue(receiver, out var subclasses)) yield break;
+        var name = method.Member.Name;
+        var count = 0;
+        foreach (var subclass in subclasses)
+        {
+            if (!subclass.Methods.TryGetValue(name, out var overriding) || overriding == method) continue;
+            yield return overriding;
+            if (++count >= MaxOverrides) yield break;
+        }
+    }
+
+    /// <summary>Every class → all its subclasses in the repo (transitively).</summary>
+    private Dictionary<PyClass, List<PyClass>> IndexSubclasses()
+    {
+        var index = new Dictionary<PyClass, List<PyClass>>();
+        foreach (var cls in _project.Files.SelectMany(f => f.Classes.Values).SelectMany(AllNested))
+        {
+            foreach (var ancestor in Bases(cls, 0))
+            {
+                if (ancestor == cls) continue;
+                if (!index.TryGetValue(ancestor, out var list)) index[ancestor] = list = new List<PyClass>();
+                list.Add(cls);
+            }
+        }
+        return index;
+
+        static IEnumerable<PyClass> AllNested(PyClass cls) =>
+            new[] { cls }.Concat(cls.Nested.Values.SelectMany(AllNested));
+    }
+
+    // ------------------------------------------------------------------ framework wiring → entry points
+
+    /// <summary>Entry points added from wiring (routes, viewsets, signal connections).</summary>
+    public int Wired { get; private set; }
+
+    private void Wire(Wiring wiring)
+    {
+        switch (wiring.Kind)
+        {
+            case WiringKind.Route when wiring.Target is { Call: true, Name: "as_view", Receiver: { } viewClass }:
+                // path("x/", ArticleView.as_view()): the class's request handlers.
+                if (Eval(viewClass, wiring.Scope, 0).Value is ClassValue cbv) HandlerEntries(cbv.Class, wiring.Label);
+                break;
+            case WiringKind.Route:
+                switch (Eval(wiring.Target, wiring.Scope, 0).Value)
+                {
+                    case FunctionValue view:
+                        Entry(view.Function, Triggers.Request, wiring.Label);
+                        break;
+                    case ClassValue viewClassValue:
+                        HandlerEntries(viewClassValue.Class, wiring.Label);
+                        break;
+                }
+                break;
+            case WiringKind.ViewSet:
+                if (Eval(wiring.Target, wiring.Scope, 0).Value is ClassValue viewSet) HandlerEntries(viewSet.Class, wiring.Label);
+                break;
+            case WiringKind.Connect:
+                if (Eval(wiring.Target, wiring.Scope, 0).Value is FunctionValue handler) Entry(handler.Function, Triggers.Event, wiring.Label);
+                break;
+        }
+    }
+
+    /// <summary>A view class's HTTP/viewset handlers (its own or inherited from repo bases), else its hooks.</summary>
+    private void HandlerEntries(PyClass cls, string label)
+    {
+        var order = Bases(cls, 0);
+        var found = false;
+        foreach (var names in new[] { Handlers, HandlerHooks })
+        {
+            foreach (var name in names)
+            {
+                var method = order.Select(k => k.Methods.GetValueOrDefault(name)).FirstOrDefault(m => m != null);
+                if (method == null) continue;
+                Entry(method, Triggers.Request, label, cls);
+                found = true;
+            }
+            if (found) return;
+        }
+    }
+
+    private void Entry(PyFunction function, string trigger, string label, PyClass? viewClass = null)
+    {
+        var owner = viewClass?.Node.Name ?? function.Class?.Node.Name ?? function.Owner.FullName;
+        _project.Output.EntryPoints.Add(new EntryPointInfo
+        {
+            Member = function.Member.Id,
+            Trigger = trigger,
+            Label = $"{label} → {owner}.{function.Member.Name}",
+            Source = "python",
+        });
+        Wired++;
     }
 
     /// <summary>The __init__ that Foo() runs: the class's own, else the nearest base's in the repo.</summary>
@@ -332,8 +470,8 @@ internal sealed class PythonResolver
         return value switch
         {
             ModuleValue module => LookupInModule(module.Module, name, depth + 1),
-            ClassValue cls => ClassMember(cls.Class, name, depth + 1),
-            InstanceValue instance => ClassMember(instance.Class, name, depth + 1),
+            ClassValue cls => ClassMember(cls.Class, name, depth + 1, null),
+            InstanceValue instance => ClassMember(instance.Class, name, depth + 1, instance.Class),
             FieldValue { Type: { } held } => Member(held, name, depth + 1),
             // Past an attribute of unknown type (User.objects.filter) we still only know it's User's.
             FieldValue unknown => new Resolved(unknown, false),
@@ -345,12 +483,13 @@ internal sealed class PythonResolver
     /// A class attribute, searching its bases too. An attribute the repo never assigns (set dynamically
     /// or by a base outside the repo) still counts as an attribute of the class.
     /// </summary>
-    private Resolved ClassMember(PyClass cls, string name, int depth)
+    /// <param name="receiver">The instance's class when accessed on an instance (method calls dispatch).</param>
+    private Resolved ClassMember(PyClass cls, string name, int depth, PyClass? receiver)
     {
         foreach (var k in Bases(cls, depth + 1))
         {
             if (k.Nested.TryGetValue(name, out var nested)) return new Resolved(new ClassValue(nested), false);
-            if (k.Methods.TryGetValue(name, out var method)) return new Resolved(new FunctionValue(method), false);
+            if (k.Methods.TryGetValue(name, out var method)) return new Resolved(new FunctionValue(method, receiver), false);
             if (k.Fields.TryGetValue(name, out var fields))
             {
                 var held = FromBindings(fields, depth + 1);
