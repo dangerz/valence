@@ -26,8 +26,11 @@ It never clones, builds, runs, records or writes to the repo.
    event conventions).
 6. **Python** (in progress, built in): packages/folders as atoms; classes and files with free
    functions as nucleons; bonds from statically resolved names (imports incl. relative and
-   `__init__.py` re-exports, `self` fields, type hints, constructor calls). Next: member-level
-   flow (ordered calls) and entry points (`__main__`, then Django, Flask/FastAPI, pygame).
+   `__init__.py` re-exports, `self` fields, type hints, constructor calls). Member links in
+   evaluation order (calls, `__init__` on construction, field and property reads/writes) and entry
+   points: `if __name__ == "__main__":`, route decorators (Flask, FastAPI…), Celery tasks,
+   click/Typer commands. Next: Django (urls → views, signals) and pygame packs, and calls through
+   base-class methods fanning out to overrides.
 
 ## Languages (planned, roughly in this order)
 

@@ -9,12 +9,13 @@ namespace Valence.Probe.Python;
 /// <summary>
 /// Python through tree-sitter, in two passes. Pass 1 (<see cref="PythonExtractor"/>) parses each file
 /// and records its nucleons, imports, bindings and name uses; trees are freed right away. Pass 2
-/// (<see cref="PythonResolver"/>) resolves the names across the whole repo and emits the bonds.
+/// (<see cref="PythonResolver"/>) resolves the names across the whole repo and emits the bonds and
+/// member links; entry points (__main__ blocks, route/task/command decorators) come from pass 1.
 /// Only reads the repo.
 /// </summary>
 internal sealed class PythonAnalyzer
 {
-    public const string Version = "0.1.0";
+    public const string Version = "0.2.0";
 
     private const string ParsePhase = "Parsing Python";
     private const string ResolvePhase = "Resolving Python names";
@@ -90,6 +91,7 @@ internal sealed class PythonAnalyzer
         var resolver = new PythonResolver(project);
         resolver.Run(resolving, ResolvePhase);
         _output.Edges.AddRange(project.Edges);
+        _output.MemberEdges.AddRange(project.MemberEdges);
 
         if (_filesWithErrors.Count > 0)
         {
@@ -101,13 +103,22 @@ internal sealed class PythonAnalyzer
             .GroupBy(e => e.Kind)
             .OrderByDescending(g => g.Count())
             .Select(g => $"{g.Count()} {g.Key}");
+        var linksByKind = project.MemberEdges
+            .GroupBy(e => e.Kind)
+            .OrderByDescending(g => g.Count())
+            .Select(g => $"{g.Count()} {g.Key}");
+        var entriesByTrigger = _output.EntryPoints
+            .GroupBy(e => e.Trigger)
+            .Select(g => $"{g.Count()} {g.Key}");
         _context.Log($"python: {project.Files.Count} files, {project.AtomCount} folders, {project.ModuleCount} modules; " +
-                     $"{stats.Classes} classes, {stats.Functions} functions, {stats.Methods} methods " +
+                     $"{stats.Classes} classes, {stats.Functions} functions, {stats.Methods} methods, {stats.Fields} fields " +
                      $"({stats.LocalClasses} classes inside functions folded in); {_filesWithErrors.Count} files with syntax errors");
         _context.Log($"python: imports {internalImports} inside the repo, {externalImports} outside; " +
-                     $"{stats.Uses} name uses → {resolver.Bonded} bonded, {resolver.Unresolved} outside the repo or unknown, " +
-                     $"{resolver.WithoutOwner} in top-level code of class-only files");
+                     $"{stats.Uses} name uses → {resolver.Bonded} bonded, {resolver.WithinClass} within their own class, " +
+                     $"{resolver.Unresolved} outside the repo or unknown, {resolver.WithoutOwner} in top-level code of class-only files");
         _context.Log($"python: {project.Edges.Count} bonds ({string.Join(", ", byKind)}); " +
+                     $"{project.MemberEdges.Count} member links ({string.Join(", ", linksByKind)}); " +
+                     $"{_output.EntryPoints.Count} entry points ({string.Join(", ", entriesByTrigger)}); " +
                      $"parse {parsedMs} ms, resolve {clock.ElapsedMilliseconds - parsedMs} ms");
         return _output;
     }

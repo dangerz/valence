@@ -12,12 +12,15 @@ internal sealed class ExtractionStats
     public int Imports;
     public int Uses;
     public int LocalClasses;
+    public int Fields;
+    public int EntryPoints;
 }
 
 /// <summary>
 /// Pass 1: one walk over a file's syntax tree. Creates the nucleons (classes, and the file's own node
-/// for free functions) with their members, and records imports, bindings (assignments, parameters,
-/// type hints) and every name use with its scope. Resolution happens later, across all files.
+/// for free functions) with their members (methods, functions, fields), and records imports, bindings
+/// (assignments, parameters, type hints), entry points and every name use with its scope, in the order
+/// Python evaluates them. Resolution happens later, across all files.
 /// </summary>
 internal sealed class PythonExtractor
 {
@@ -28,6 +31,17 @@ internal sealed class PythonExtractor
     private static readonly Regex Whitespace = new(@"\s+", RegexOptions.Compiled);
     private static readonly Regex DottedName = new(@"^[A-Za-z_][\w]*(\.[A-Za-z_][\w]*)*$", RegexOptions.Compiled);
     private static readonly Regex NameToken = new(@"[A-Za-z_][\w]*(\.[A-Za-z_][\w]*)*", RegexOptions.Compiled);
+    private static readonly Regex Spaces = new(@"\s", RegexOptions.Compiled);
+
+    // Entry-point decorators (until data-driven framework packs): web routes, task queues, CLIs.
+    private static readonly Regex RouteDecorator = new(
+        @"^[\w.]+\.(?<verb>route|get|post|put|patch|delete|head|options|websocket|api_route)\((?<args>.*)\)$",
+        RegexOptions.Compiled | RegexOptions.Singleline);
+    private static readonly Regex TaskDecorator = new(@"^(?:[\w.]+\.)?(?:task|shared_task)(?:\(.*\))?$",
+        RegexOptions.Compiled | RegexOptions.Singleline);
+    private static readonly Regex CommandDecorator = new(@"^[\w.]+\.(?:command|group)(?:\(.*\))?$",
+        RegexOptions.Compiled | RegexOptions.Singleline);
+    private static readonly Regex FirstString = new(@"^\s*[rbuf]*[""'](?<text>[^""']*)[""']", RegexOptions.Compiled);
 
     /// <summary>Builtins never resolve to repo code; skipping them keeps the use list small.</summary>
     private static readonly HashSet<string> Builtins = new(StringComparer.Ordinal)
@@ -90,6 +104,12 @@ internal sealed class PythonExtractor
                 break;
             case "assignment":
                 Assignment(node, scope, depth);
+                break;
+            case "augmented_assignment":
+                AugmentedAssignment(node, scope, depth);
+                break;
+            case "if_statement" when scope.Function == null && scope.Class == null && IsMainGuard(node):
+                MainBlock(node, scope, depth);
                 break;
             case "call":
                 Call(node, scope, depth);
@@ -217,10 +237,15 @@ internal sealed class PythonExtractor
         var owner = cls?.Node ?? _project.FileNode(_file);
         var decorators = Decorators(node);
         var isStatic = decorators.Contains("staticmethod");
-        owner.Members.Add(Member(node, name, owner, decorators, isMethod: cls != null));
+        var member = Member(node, name, owner, decorators, isMethod: cls != null);
+        owner.Members.Add(member);
         owner.Metrics[MetricKeys.Methods] = owner.Metrics.GetValueOrDefault(MetricKeys.Methods) + 1;
+        foreach (var decorator in decorators)
+        {
+            if (EntryPoint(decorator, name) is { } entry) AddEntryPoint(member, entry.Trigger, entry.Label);
+        }
 
-        var fn = new PyFunction(owner.Members[^1], owner, cls, _file)
+        var fn = new PyFunction(member, owner, cls, _file)
         {
             SelfIsClass = decorators.Contains("classmethod") || name is "__new__" or "__init_subclass__",
         };
@@ -295,6 +320,7 @@ internal sealed class PythonExtractor
         }
 
         var target = TargetOf(left, scope);
+        if (target is { IsField: true } field && scope.Class != null) FieldMember(scope.Class, field.Name, left, type);
         if (type != null)
         {
             TypeUses(type, target is { IsField: true } ? UseKind.FieldType : UseKind.Annotation, scope);
@@ -310,9 +336,110 @@ internal sealed class PythonExtractor
             Walk(right, scope, depth + 1);
         }
 
-        // Writing another object's attribute (Foo.count = 1) uses it; a name being defined doesn't.
-        if (left.Type == "attribute" && target == null) Mention(left, scope, depth);
+        // The value is computed first, then stored: self.x = …, Foo.count = … are writes.
+        if (left.Type == "attribute") Write(left, scope, depth);
         else if (left.Type == "subscript") Walk(left, scope, depth + 1);
+    }
+
+    /// <summary>x += …, self.count += 1: the target is read, then written.</summary>
+    private void AugmentedAssignment(Node node, Scope scope, int depth)
+    {
+        if (node.GetChildForField("right") is { } right) Walk(right, scope, depth + 1);
+        if (node.GetChildForField("left") is not { } left) return;
+        if (left.Type == "attribute")
+        {
+            Mention(left, scope, depth);
+            if (RefOf(left) is { } written && !IsBuiltin(written)) AddUse(UseKind.Write, written, scope, left);
+        }
+        else
+        {
+            Walk(left, scope, depth + 1);
+        }
+    }
+
+    private void Write(Node attribute, Scope scope, int depth)
+    {
+        if (attribute.GetChildForField("object") is { } obj) WalkChain(obj, scope, depth + 1);
+        if (RefOf(attribute) is { } written && !IsBuiltin(written)) AddUse(UseKind.Write, written, scope, attribute);
+    }
+
+    /// <summary>A class attribute or self.x becomes a field member, the first time it's assigned.</summary>
+    private void FieldMember(PyClass cls, string name, Node at, Node? type)
+    {
+        if (cls.FieldMembers.ContainsKey(name) || cls.Methods.ContainsKey(name)) return;
+        var member = new MemberInfo
+        {
+            Id = MemberId(cls.Node, name, Line(at)),
+            Name = name,
+            Kind = MemberKinds.Field,
+            Visibility = IsPrivate(name) ? "private" : "public",
+            Signature = type != null ? Collapse($"{name}: {type.Text}") : name,
+            File = _file.Path,
+            Line = Line(at),
+        };
+        cls.Node.Members.Add(member);
+        cls.FieldMembers[name] = member;
+        cls.Node.Metrics[MetricKeys.Fields] = cls.Node.Metrics.GetValueOrDefault(MetricKeys.Fields) + 1;
+        _stats.Fields++;
+    }
+
+    // ------------------------------------------------------------------ entry points
+
+    private static bool IsMainGuard(Node node)
+    {
+        if (node.GetChildForField("condition") is not { } condition) return false;
+        var text = Spaces.Replace(condition.Text, "").Replace('\'', '"');
+        return text is "__name__==\"__main__\"" or "\"__main__\"==__name__";
+    }
+
+    /// <summary>
+    /// <c>if __name__ == "__main__":</c> is the file's startup entry point: its body becomes a function
+    /// member (__main__) on the file's node, so what it calls plays in order.
+    /// </summary>
+    private void MainBlock(Node node, Scope scope, int depth)
+    {
+        var owner = _project.FileNode(_file);
+        var member = new MemberInfo
+        {
+            Id = MemberId(owner, "__main__", Line(node)),
+            Name = "__main__",
+            Kind = MemberKinds.Function,
+            Visibility = "public",
+            Signature = "if __name__ == \"__main__\":",
+            File = _file.Path,
+            Line = Line(node),
+        };
+        owner.Members.Add(member);
+        AddEntryPoint(member, Triggers.Startup, $"{_file.Path} (__main__)");
+
+        var main = new PyFunction(member, owner, null, _file);
+        if (node.GetChildForField("consequence") is { } body) Walk(body, new Scope(_file, null, main), depth + 1);
+        foreach (var (field, child) in node.Fields)
+        {
+            if (field == "alternative") Walk(child, scope, depth + 1);
+        }
+    }
+
+    /// <summary>Routes (Flask, FastAPI, Quart…), tasks (Celery) and CLI commands (click, Typer) by decorator.</summary>
+    private static (string Trigger, string Label)? EntryPoint(string decorator, string name)
+    {
+        var route = RouteDecorator.Match(decorator);
+        if (route.Success)
+        {
+            var verb = route.Groups["verb"].Value;
+            var path = FirstString.Match(route.Groups["args"].Value);
+            var method = verb is "route" or "api_route" or "websocket" ? verb : verb.ToUpperInvariant();
+            return (Triggers.Request, $"{method} {(path.Success ? path.Groups["text"].Value : "")} → {name}".Replace("  ", " "));
+        }
+        if (TaskDecorator.IsMatch(decorator)) return (Triggers.Job, $"task {name}");
+        if (CommandDecorator.IsMatch(decorator)) return (Triggers.Startup, $"command {name}");
+        return null;
+    }
+
+    private void AddEntryPoint(MemberInfo member, string trigger, string label)
+    {
+        _project.Output.EntryPoints.Add(new EntryPointInfo { Member = member.Id, Trigger = trigger, Label = label, Source = "python" });
+        _stats.EntryPoints++;
     }
 
     private readonly record struct Target(Dictionary<string, List<Binding>> Map, string Name, bool IsField);
@@ -417,21 +544,22 @@ internal sealed class PythonExtractor
 
     // ------------------------------------------------------------------ expressions
 
+    /// <summary>The receiver chain and arguments run before the call itself, so their uses come first.</summary>
     private void Call(Node node, Scope scope, int depth)
     {
-        if (RefOf(node) is { } callee && !IsBuiltin(callee)) AddUse(UseKind.Call, callee, scope, node);
         if (node.GetChildForField("function") is { } function) WalkChain(function, scope, depth + 1);
         if (node.GetChildForField("arguments") is { } arguments) Walk(arguments, scope, depth + 1);
+        if (RefOf(node) is { } callee && !IsBuiltin(callee)) AddUse(UseKind.Call, callee, scope, node);
     }
 
     /// <summary>A name or attribute chain read as a value (not the callee of a call).</summary>
     private void Mention(Node node, Scope scope, int depth)
     {
+        if (node.Type == "attribute" && node.GetChildForField("object") is { } obj) WalkChain(obj, scope, depth + 1);
         if (RefOf(node) is { } reference && !IsBuiltin(reference) && !IsLocal(reference, scope))
         {
             AddUse(UseKind.Mention, reference, scope, node);
         }
-        if (node.Type == "attribute" && node.GetChildForField("object") is { } obj) WalkChain(obj, scope, depth + 1);
     }
 
     /// <summary>The parts of a chain that are code of their own: inner calls, subscripts, literals.</summary>
@@ -605,12 +733,9 @@ internal sealed class PythonExtractor
         var signature = Collapse($"{(isAsync ? "async " : "")}def {name}{parameters}");
         if (signature.Length > 160) signature = signature[..157] + "…";
 
-        var id = owner.Id + "." + name;
-        if (owner.Members.Any(m => m.Id == id)) id += "#" + (function.StartPosition.Row + 1);
-
         return new MemberInfo
         {
-            Id = id,
+            Id = MemberId(owner, name, function.StartPosition.Row + 1),
             Name = name,
             Kind = kind,
             Visibility = IsPrivate(name) ? "private" : "public",
@@ -622,6 +747,13 @@ internal sealed class PythonExtractor
     }
 
     // ------------------------------------------------------------------ helpers
+
+    /// <summary>owner.name, or owner.name#line when the name is taken (property setters, redefinitions).</summary>
+    private static string MemberId(NodeInfo owner, string name, int line)
+    {
+        var id = owner.Id + "." + name;
+        return owner.Members.Any(m => m.Id == id) ? id + "#" + line : id;
+    }
 
     private void AddUse(UseKind kind, Ref reference, Scope scope, Node at, NodeInfo? source = null)
     {

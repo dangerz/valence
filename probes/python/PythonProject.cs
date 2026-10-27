@@ -15,6 +15,8 @@ internal sealed class PythonProject
     private readonly HashSet<string> _molecules = new(StringComparer.Ordinal);
     private readonly HashSet<string> _ids = new(StringComparer.Ordinal);
     private readonly Dictionary<(string, string, string), EdgeInfo> _edges = new();
+    private readonly Dictionary<(string, string, string), MemberEdgeInfo> _memberEdges = new();
+    private readonly Dictionary<string, int> _nextOrder = new(StringComparer.Ordinal);
     private readonly Dictionary<string, List<PyModule>> _byName = new(StringComparer.Ordinal);
     private readonly Dictionary<string, PyModule> _byRepoPath = new(StringComparer.Ordinal);
     private readonly Dictionary<string, List<PyModule>> _suffixCache = new(StringComparer.Ordinal);
@@ -39,6 +41,8 @@ internal sealed class PythonProject
     public int ModuleCount => _byRepoPath.Count;
 
     public IReadOnlyCollection<EdgeInfo> Edges => _edges.Values;
+
+    public IReadOnlyCollection<MemberEdgeInfo> MemberEdges => _memberEdges.Values;
 
     // ------------------------------------------------------------------ naming
 
@@ -156,6 +160,33 @@ internal sealed class PythonProject
         {
             _edges[key] = new EdgeInfo { Source = source.Id, Target = target.Id, Kind = kind, Confidence = confidence };
         }
+    }
+
+    /// <summary>
+    /// One member edge per (source, target, kind). <c>order</c> is the position of its first occurrence
+    /// among the source's edges; uses arrive in evaluation order, so simulation plays them as written.
+    /// </summary>
+    public void AddMemberEdge(MemberInfo source, MemberInfo target, string kind, int line, string? confidence)
+    {
+        if (ReferenceEquals(source, target)) return;
+        var key = (source.Id, target.Id, kind);
+        if (_memberEdges.TryGetValue(key, out var edge))
+        {
+            edge.Weight++;
+            edge.Confidence = Confidence.Strongest(edge.Confidence, confidence);
+            return;
+        }
+        var order = _nextOrder.GetValueOrDefault(source.Id);
+        _nextOrder[source.Id] = order + 1;
+        _memberEdges[key] = new MemberEdgeInfo
+        {
+            Source = source.Id,
+            Target = target.Id,
+            Kind = kind,
+            Order = order,
+            Line = line,
+            Confidence = confidence,
+        };
     }
 
     // ------------------------------------------------------------------ module index

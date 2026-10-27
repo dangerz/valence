@@ -15,11 +15,12 @@ internal sealed record FunctionValue(PyFunction Function) : Value;
 /// <summary>An instance of a repo class (self, Foo(), a typed parameter or field).</summary>
 internal sealed record InstanceValue(PyClass Class) : Value;
 
-/// <summary>An attribute of a repo class; <see cref="Type"/> is what it holds, when known.</summary>
-internal sealed record FieldValue(PyClass Owner, Value? Type) : Value;
+/// <summary>Attribute <see cref="Name"/> of a repo class; <see cref="Type"/> is what it holds, when known.</summary>
+internal sealed record FieldValue(PyClass Owner, Value? Type, string Name) : Value;
 
 /// <summary>
-/// Pass 2: evaluates every recorded use across the repo and turns it into bonds. Names resolve the
+/// Pass 2: evaluates every recorded use across the repo and turns it into bonds, plus member links
+/// (calls, creates via __init__, field reads/writes) in evaluation order for simulation. Names resolve the
 /// way Python does, statically: locals and parameters, then the file (classes, functions, imports,
 /// globals, wildcard imports), following re-exports through __init__.py. Attribute chains go through
 /// modules, classes (and their bases), and instances whose class is known from self, a constructor
@@ -44,9 +45,17 @@ internal sealed class PythonResolver
         _project = project;
     }
 
+    /// <summary>Uses that became a bond between nucleons.</summary>
     public int Bonded { get; private set; }
 
+    /// <summary>Uses that resolved inside their own class (self.helper()): no bond, maybe a member link.</summary>
+    public int WithinClass { get; private set; }
+
+    /// <summary>Uses that lead outside the repo or can't be resolved statically.</summary>
     public int Unresolved { get; private set; }
+
+    /// <summary>Member links (calls, creates, reads, writes) for simulation.</summary>
+    public int Linked { get; private set; }
 
     /// <summary>Uses in top-level code of files that have no node of their own (class-only files).</summary>
     public int WithoutOwner { get; private set; }
@@ -99,50 +108,90 @@ internal sealed class PythonResolver
         var lookup = use.Kind == UseKind.Call ? use.Ref with { Call = false } : use.Ref;
         var resolved = Eval(lookup, use.Scope, 0);
         var confidence = resolved.Inferred ? Confidence.Likely : null;
-        var before = Bonded;
 
+        // A bond between nucleons, and (inside a function) a link between members for simulation.
+        NodeInfo? bondTo = null;
+        string? bondKind = null;
+        MemberInfo? linkTo = null;
+        string? linkKind = null;
         switch (use.Kind, resolved.Value)
         {
             case (UseKind.Call, ClassValue created):
-                Bond(created.Class.Node, EdgeKinds.Creates);
+                (bondTo, bondKind) = (created.Class.Node, EdgeKinds.Creates);
+                (linkTo, linkKind) = (Constructor(created.Class), MemberEdgeKinds.Creates);
                 break;
             case (UseKind.Call, FunctionValue called):
-                Bond(called.Function.Owner, EdgeKinds.Calls);
+                (bondTo, bondKind) = (called.Function.Owner, EdgeKinds.Calls);
+                (linkTo, linkKind) = (called.Function.Member, MemberEdgeKinds.Calls);
                 break;
             case (UseKind.Call, FieldValue callable):
-                Bond(callable.Owner.Node, EdgeKinds.Calls);
+                (bondTo, bondKind) = (callable.Owner.Node, EdgeKinds.Calls);
                 break;
             case (UseKind.Mention, ClassValue mentioned):
-                Bond(mentioned.Class.Node, EdgeKinds.References);
+                (bondTo, bondKind) = (mentioned.Class.Node, EdgeKinds.References);
                 break;
             case (UseKind.Mention, FunctionValue passed):
-                Bond(passed.Function.Owner, EdgeKinds.References);
+                (bondTo, bondKind) = (passed.Function.Owner, EdgeKinds.References);
+                if (passed.Function.Member.Kind == MemberKinds.Property) (linkTo, linkKind) = (passed.Function.Member, MemberEdgeKinds.Reads);
                 break;
-            case (UseKind.Mention, FieldValue field):
-                Bond(field.Owner.Node, EdgeKinds.Uses);
+            case (UseKind.Mention, FieldValue read):
+                (bondTo, bondKind) = (read.Owner.Node, EdgeKinds.Uses);
+                (linkTo, linkKind) = (FieldMember(read), MemberEdgeKinds.Reads);
+                break;
+            case (UseKind.Write, FieldValue written):
+                (bondTo, bondKind) = (written.Owner.Node, EdgeKinds.Uses);
+                (linkTo, linkKind) = (FieldMember(written), MemberEdgeKinds.Writes);
+                break;
+            case (UseKind.Write, FunctionValue setter) when setter.Function.Member.Kind == MemberKinds.Property:
+                (bondTo, bondKind) = (setter.Function.Owner, EdgeKinds.Uses);
+                (linkTo, linkKind) = (setter.Function.Member, MemberEdgeKinds.Writes);
                 break;
             case (UseKind.Inherit, ClassValue baseClass):
-                Bond(baseClass.Class.Node, EdgeKinds.Inherits);
+                (bondTo, bondKind) = (baseClass.Class.Node, EdgeKinds.Inherits);
                 break;
             case (UseKind.Annotation, ClassValue hinted):
-                Bond(hinted.Class.Node, EdgeKinds.References);
+                (bondTo, bondKind) = (hinted.Class.Node, EdgeKinds.References);
                 break;
             case (UseKind.FieldType, ClassValue held):
-                Bond(held.Class.Node, EdgeKinds.Has);
+                (bondTo, bondKind) = (held.Class.Node, EdgeKinds.Has);
                 break;
             case (UseKind.Assigned, InstanceValue stored):
-                Bond(stored.Class.Node, EdgeKinds.Has);
+                (bondTo, bondKind) = (stored.Class.Node, EdgeKinds.Has);
                 break;
         }
-        if (Bonded == before) Unresolved++;
 
-        void Bond(NodeInfo target, string kind)
+        if (bondTo == null || bondKind == null)
         {
-            if (ReferenceEquals(target, source)) return;
-            _project.AddEdge(source, target, kind, confidence);
+            Unresolved++;
+        }
+        else if (ReferenceEquals(bondTo, source))
+        {
+            WithinClass++;      // self.helper(): no bond, but still a member link below
+        }
+        else
+        {
+            _project.AddEdge(source, bondTo, bondKind, confidence);
             Bonded++;
         }
+
+        if (use.Scope.Function?.Member is { } caller && linkTo != null && linkKind != null && !ReferenceEquals(caller, linkTo))
+        {
+            _project.AddMemberEdge(caller, linkTo, linkKind, use.Line, confidence);
+            Linked++;
+        }
     }
+
+    /// <summary>The __init__ that Foo() runs: the class's own, else the nearest base's in the repo.</summary>
+    private MemberInfo? Constructor(PyClass cls)
+    {
+        foreach (var k in Bases(cls, 0))
+        {
+            if (k.Methods.TryGetValue("__init__", out var init)) return init.Member;
+        }
+        return null;
+    }
+
+    private static MemberInfo? FieldMember(FieldValue field) => field.Owner.FieldMembers.GetValueOrDefault(field.Name);
 
     // ------------------------------------------------------------------ evaluation
 
@@ -305,10 +354,10 @@ internal sealed class PythonResolver
             if (k.Fields.TryGetValue(name, out var fields))
             {
                 var held = FromBindings(fields, depth + 1);
-                return new Resolved(new FieldValue(k, held.Value), held.Inferred);
+                return new Resolved(new FieldValue(k, held.Value, name), held.Inferred);
             }
         }
-        return new Resolved(new FieldValue(cls, null), false);
+        return new Resolved(new FieldValue(cls, null, name), false);
     }
 
     /// <summary>The class followed by its repo bases, depth-first (close enough to Python's MRO).</summary>

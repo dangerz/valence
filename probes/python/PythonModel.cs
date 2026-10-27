@@ -30,6 +30,9 @@ internal enum UseKind
 
     /// <summary>The value stored in a field (<c>self.x = Foo()</c>): composition when it's an instance.</summary>
     Assigned,
+
+    /// <summary>An attribute being assigned (<c>self.x = …</c>, <c>obj.count += 1</c>).</summary>
+    Write,
 }
 
 /// <summary>
@@ -38,7 +41,10 @@ internal enum UseKind
 /// </summary>
 internal sealed record Use(UseKind Kind, Ref Ref, Scope Scope, int Line, NodeInfo? Source = null);
 
-/// <summary>Where code is: a file's top level, a class body, or a function (nested functions fold into theirs).</summary>
+/// <summary>
+/// Where code is: a file's top level, a class body, or a function (nested functions fold into theirs;
+/// a file's <c>if __name__ == "__main__":</c> block is a function of its own).
+/// </summary>
 internal sealed class Scope
 {
     public Scope(PyFile file, PyClass? cls, PyFunction? function)
@@ -153,6 +159,9 @@ internal sealed class PyClass
 
     /// <summary>Class-level attributes and <c>self.x</c> assignments.</summary>
     public Dictionary<string, List<Binding>> Fields { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>The member each field is listed as (for reads/writes in simulation).</summary>
+    public Dictionary<string, MemberInfo> FieldMembers { get; } = new(StringComparer.Ordinal);
 
     public List<Ref> Bases { get; } = new();
 }
