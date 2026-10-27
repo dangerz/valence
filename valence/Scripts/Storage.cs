@@ -238,6 +238,9 @@ public sealed class ViewerSettings
     public float OutlineWidth { get; set; } = 300f;
     public float RightWidth { get; set; } = 400f;
 
+    /// <summary>View ▸ Full Screen: exclusive full screen (the default), else a maximized window.</summary>
+    public bool Fullscreen { get; set; } = true;
+
     private static string SettingsPath => ProjectSettings.GlobalizePath("user://viewer.json");
 
     public static ViewerSettings Load()

@@ -99,6 +99,7 @@ src/Valence.Syntax/   tree-sitter engine (bindings + bundled native grammars) fo
 probes/csharp/        C# probe (Roslyn): built in, and also runnable standalone
 probes/python/        Python probe (tree-sitter): built in
 tools/make_icon.py    rebuilds the app icon from the logo
+tools/build_ui_sheets.py  rebuilds the UI icon and panel sheets from images/ui-source/
 valence/              Godot 4.7 (.NET) viewer
 docs/plugin-protocol.md   how to write a probe for another language
 AGENTS.md             guide for AI agents contributing (rules, structure, adding a language)
@@ -158,6 +159,11 @@ The viewer also accepts `-- --graph <file>` on the Godot command line.
 
 ## Viewer controls
 
+The toolbar above the 3D view switches lenses (**Structure**: public vs internal, **Changes**: git
+churn, **Dependencies**: coupling; the same as View ▸ Color By), opens **Filters** and **Fit view**.
+The buttons in the view's corner pick what a left-drag does: **select** (click selects, drag orbits),
+**orbit** (clicks don't select), **pan** or **zoom**; ▾ has zoom steps, fit and reset layout.
+
 | Input | Action |
 |-------|--------|
 | Drag / two-finger swipe | orbit |
@@ -169,6 +175,7 @@ The viewer also accepts `-- --graph <file>` on the Godot command line.
 | Click a port | jump to that system |
 | Shift-drag atom | move it (saved per repo) |
 | Double-click empty space, **F** | frame everything |
+| **F11** / **⌃⌘F** | full screen on/off (View ▸ Full Screen; remembered) |
 | **Esc** | back out one level |
 | **⌘F** / Outline filter | find a class or system by name |
 | **⌘O** / **⌘⇧O** / **⌘R** | open source folder / open graph / re-analyze |

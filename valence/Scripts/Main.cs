@@ -129,6 +129,9 @@ public partial class Main : Node3D
     // Mouse.
     private bool _leftDown;
     private bool _dragged;
+
+    // What a left-drag does (the tool buttons in the 3D view's corner).
+    private ViewTool _tool = ViewTool.Select;
     private Vector2 _pressPosition;
     private AtomData? _dragAtom;
     private Vector3 _dragOffset;
@@ -151,7 +154,9 @@ public partial class Main : Node3D
         var canvas = new CanvasLayer();
         AddChild(canvas);
         canvas.AddChild(_hud);
+        _hud.Gizmo.Camera = _camera;
         WireHud();
+        ApplyFullscreen(_settings.Fullscreen, save: false);
         _hud.SetRecent(_settings.RecentFolders);
         _quietFade = Mathf.Clamp(_settings.QuietFade, 0.02f, 0.9f);
         _hud.SetQuietFade(_quietFade);
@@ -217,6 +222,9 @@ public partial class Main : Node3D
         _hud.RecentFolderChosen += OpenRecent;
         _hud.ReanalyzeRequested += Reanalyze;
         _hud.QuitRequested += () => GetTree().Quit();
+        _hud.ToolChanged += tool => _tool = tool;
+        _hud.FullscreenToggled += () => ApplyFullscreen(!IsFullscreen(), save: true);
+        _hud.ZoomStepRequested += factor => _camera.Zoom(factor);
         _hud.ColorModeChanged += mode =>
         {
             _colorMode = mode;
@@ -441,9 +449,7 @@ public partial class Main : Node3D
         ShowSummary();
 
         var repo = graph.Repo;
-        var commit = string.IsNullOrEmpty(repo.Commit) ? "" : $" @ {repo.Commit[..Math.Min(8, repo.Commit.Length)]}";
-        var branch = string.IsNullOrEmpty(repo.Branch) ? "" : $" ({repo.Branch})";
-        _hud.SetRepo($"{repo.Name}{branch}{commit}  ·  {repo.Root}");
+        _hud.SetRepoInfo(repo.Name, repo.Root, repo.Branch, repo.Commit);
         _hud.SetReanalyzeEnabled(Directory.Exists(repo.Root));
         _hud.SetStatus($"{_model.Nodes.Count} classes in {_model.AtomList.Count} systems, " +
                        $"{_model.Molecules.Count} projects, {_model.Bonds.Count} bonds · {path}");
@@ -805,7 +811,7 @@ public partial class Main : Node3D
     private void ShowSummary()
     {
         if (_model == null) return;
-        _hud.ShowInfo(InfoText.ForSummary(_model));
+        _hud.ShowRepoSummary(_model);
         _hud.Methods.ShowEntryPoints(_model, CanPlay);
     }
 
@@ -1576,6 +1582,24 @@ public partial class Main : Node3D
         if (immediate) GD.Print($"[valence] framing center {center}, size {size:F1}, camera at {_camera.GlobalPosition}");
     }
 
+    // ---------------------------------------------------------------- window
+
+    private static bool IsFullscreen() =>
+        DisplayServer.WindowGetMode() is DisplayServer.WindowMode.ExclusiveFullscreen or DisplayServer.WindowMode.Fullscreen;
+
+    /// <summary>View ▸ Full Screen: exclusive full screen, or a normal window filling the screen.</summary>
+    private void ApplyFullscreen(bool fullscreen, bool save)
+    {
+        if (IsFullscreen() != fullscreen)
+        {
+            DisplayServer.WindowSetMode(fullscreen ? DisplayServer.WindowMode.ExclusiveFullscreen : DisplayServer.WindowMode.Maximized);
+        }
+        _hud.SetFullscreen(fullscreen);
+        if (!save) return;
+        _settings.Fullscreen = fullscreen;
+        _settings.Save();
+    }
+
     // ---------------------------------------------------------------- input
 
     public override void _UnhandledInput(InputEvent @event)
@@ -1618,7 +1642,7 @@ public partial class Main : Node3D
                 _leftDown = true;
                 _dragged = false;
                 _pressPosition = button.Position;
-                _dragAtom = button.ShiftPressed ? PickAtom(button.Position) : null;
+                _dragAtom = button.ShiftPressed && _tool == ViewTool.Select ? PickAtom(button.Position) : null;
                 if (_dragAtom != null && RayPlane(button.Position, _dragAtom.Position.Y) is { } hit)
                 {
                     _dragOffset = _dragAtom.Position - hit;
@@ -1628,7 +1652,7 @@ public partial class Main : Node3D
                 if (!_leftDown) break;
                 _leftDown = false;
                 if (_dragAtom != null && _dragged) PinAtom(_dragAtom);
-                else if (!_dragged) Click(button.Position);
+                else if (!_dragged && _tool == ViewTool.Select) Click(button.Position);
                 _dragAtom = null;
                 break;
             case MouseButton.WheelUp when button.Pressed:
@@ -1653,7 +1677,18 @@ public partial class Main : Node3D
             }
             else
             {
-                _camera.Orbit(motion.Relative);
+                switch (_tool)
+                {
+                    case ViewTool.Pan:
+                        _camera.Pan(motion.Relative);
+                        break;
+                    case ViewTool.Zoom:
+                        _camera.Zoom(1f + motion.Relative.Y * 0.006f);
+                        break;
+                    default:
+                        _camera.Orbit(motion.Relative);
+                        break;
+                }
             }
         }
         else if (motion.ButtonMask.HasFlag(MouseButtonMask.Right) || motion.ButtonMask.HasFlag(MouseButtonMask.Middle))
@@ -1680,6 +1715,10 @@ public partial class Main : Node3D
                 break;
             case Key.R when command:
                 Reanalyze();
+                break;
+            case Key.F11:
+            case Key.F when key.CtrlPressed && key.MetaPressed:
+                ApplyFullscreen(!IsFullscreen(), save: true);
                 break;
             case Key.F when command:
                 _hud.FocusSearch();

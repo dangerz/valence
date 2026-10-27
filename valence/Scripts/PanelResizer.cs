@@ -4,8 +4,8 @@ using Godot;
 namespace Valence.Viewer;
 
 /// <summary>
-/// A side panel's border that can be dragged to resize it. Draws the border line itself and
-/// highlights it on hover or while dragging.
+/// The gap beside a side panel, dragged to resize it. Drawn in the app background, with a line
+/// on hover or while dragging.
 /// </summary>
 public partial class PanelResizer : Control
 {
@@ -55,10 +55,9 @@ public partial class PanelResizer : Control
 
     public override void _Draw()
     {
-        var background = new Color(0.06f, 0.08f, 0.12f, 0.92f);
-        DrawRect(new Rect2(Vector2.Zero, Size), background);
-        var color = _hover || _dragging ? Palette.Accent : Palette.PanelBorder;
-        var width = _hover || _dragging ? 3f : 2f;
-        DrawRect(new Rect2((Size.X - width) / 2f, 0f, width, Size.Y), color);
+        DrawRect(new Rect2(Vector2.Zero, Size), UiKit.AppBackground);
+        if (!_hover && !_dragging) return;
+        const float width = 2f;
+        DrawRect(new Rect2((Size.X - width) / 2f, 8f, width, Math.Max(0f, Size.Y - 16f)), Palette.Accent);
     }
 }

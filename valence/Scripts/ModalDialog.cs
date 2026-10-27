@@ -37,7 +37,7 @@ public partial class ModalDialog : Control
         AddChild(center);
 
         var panel = new PanelContainer { CustomMinimumSize = new Vector2(width, 0f) };
-        panel.AddThemeStyleboxOverride("panel", ValenceTheme.Box(ValenceTheme.Panel, Palette.Accent, 2, 10, 22f));
+        panel.AddThemeStyleboxOverride("panel", UiAssets.Box(Patch.Accent, 24f, 22f));
         center.AddChild(panel);
 
         var column = new VBoxContainer();

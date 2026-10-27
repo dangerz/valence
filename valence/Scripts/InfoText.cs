@@ -15,43 +15,6 @@ public static class InfoText
     private static readonly string Muted = Palette.Html(Palette.MutedText);
     private static readonly string EntryColor = Palette.Html(Palette.Accent);
 
-    public static string ForSummary(GraphModel model)
-    {
-        var repo = model.Graph.Repo;
-        var sb = new StringBuilder();
-        sb.Append($"[font_size=20][b]{Esc(repo.Name)}[/b][/font_size]\n");
-        sb.Append($"[color={Muted}]{Esc(repo.Root)}[/color]\n");
-        if (!string.IsNullOrEmpty(repo.Commit))
-        {
-            sb.Append($"[color={Muted}]{Esc(repo.Branch ?? "")} @ {Esc(repo.Commit[..Math.Min(10, repo.Commit.Length)])}[/color]\n");
-        }
-        sb.Append('\n');
-        sb.Append($"{model.Molecules.Count} projects · {model.AtomList.Count} systems · {model.Nodes.Count} classes\n");
-        sb.Append($"{model.Bonds.Count} bonds, {model.Bonds.Count(b => b.Covalent)} of them cycles\n");
-        var members = model.Nodes.Values.Sum(n => n.Info.Members.Count);
-        if (members > 0) sb.Append($"{members} members · {model.Graph.MemberEdges.Count} member-level links\n");
-
-        var entries = model.Graph.EntryPoints;
-        if (entries.Count > 0)
-        {
-            sb.Append($"\n[b]Entry points[/b] ({entries.Count})\n");
-            foreach (var group in entries.GroupBy(e => e.Trigger).OrderBy(g => g.Key, StringComparer.Ordinal))
-            {
-                sb.Append($"[color={EntryColor}]▶ {Esc(group.Key)}[/color] ");
-                var links = group.OrderBy(e => e.Label, StringComparer.OrdinalIgnoreCase).Take(MaxLinksPerGroup).Select(e =>
-                    model.MemberOwners.TryGetValue(e.Member, out var owner)
-                        ? $"[url=node:{owner.Info.Id}]{Esc(e.Label)}[/url]"
-                        : Esc(e.Label));
-                sb.Append(string.Join(", ", links));
-                if (group.Count() > MaxLinksPerGroup) sb.Append($" [color={Muted}]+{group.Count() - MaxLinksPerGroup} more[/color]");
-                sb.Append('\n');
-            }
-        }
-
-        sb.Append($"\n[color={Muted}]Click a system to open it, or pick anything from the Outline.[/color]\n");
-        return sb.ToString();
-    }
-
     public static string ForComparison(Comparison comparison, GraphModel model)
     {
         var sb = new StringBuilder();

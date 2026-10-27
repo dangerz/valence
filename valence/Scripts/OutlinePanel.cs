@@ -6,15 +6,17 @@ using Godot;
 namespace Valence.Viewer;
 
 /// <summary>
-/// Searchable tree: ★ Favorites, then project → system → class, all alphabetical. Picking an item
-/// selects it in 3D, so finding something never means clicking around in the scene. The left
-/// column is a visibility toggle per item: click it to cycle Shown → Quiet → Hidden; right-click a
-/// row for those choices and to add or remove it from Favorites.
+/// Searchable tree: ★ Favorites, then project → system → class, all alphabetical, with class counts.
+/// Picking an item selects it in 3D, so finding something never means clicking around in the scene.
+/// The eye on the right of each row cycles Shown → Quiet → Hidden; right-click a row for those
+/// choices and to add or remove it from Favorites.
 /// </summary>
 public partial class OutlinePanel : PanelContainer
 {
-    private const int StateColumn = 0;
-    private const int NameColumn = 1;
+    private const int NameColumn = 0;
+    private const int CountColumn = 1;
+    private const int StateColumn = 2;
+    private const int IconSize = 18;
     private const int MenuShow = 0;
     private const int MenuQuiet = 1;
     private const int MenuHide = 2;
@@ -51,39 +53,51 @@ public partial class OutlinePanel : PanelContainer
     public void Build()
     {
         var column = new VBoxContainer();
-        column.AddThemeConstantOverride("separation", 6);
+        column.AddThemeConstantOverride("separation", 10);
         AddChild(column);
 
-        var title = new Label { Text = "Outline" };
-        title.AddThemeColorOverride("font_color", Palette.Accent);
-        column.AddChild(title);
+        var header = UiKit.Header("menu", UiKit.Title("Outline"));
+        header.AddChild(UiKit.Spacer());
+        header.AddChild(UiKit.IconButton("plus-square", "Expand all", () => SetAllCollapsed(false), 30f));
+        header.AddChild(UiKit.IconButton("minus-square", "Collapse all", () => SetAllCollapsed(true), 30f));
+        column.AddChild(header);
 
-        _filter = new LineEdit { PlaceholderText = "Filter classes and systems… (⌘F)", ClearButtonEnabled = true };
+        column.AddChild(UiKit.SearchField("Filter classes and systems… (⌘F)", out var filter));
+        _filter = filter;
         _filter.TextChanged += _ => Rebuild();
         _filter.TextSubmitted += _ => ChooseFirstMatch();
-        column.AddChild(_filter);
 
         _tree = new Tree
         {
             HideRoot = true,
-            Columns = 2,
+            Columns = 3,
             SelectMode = Tree.SelectModeEnum.Single,
             AllowRmbSelect = true,
             SizeFlagsVertical = SizeFlags.ExpandFill,
         };
+        _tree.SetColumnExpand(NameColumn, true);
+        _tree.SetColumnExpand(CountColumn, false);
+        _tree.SetColumnCustomMinimumWidth(CountColumn, 48);
         _tree.SetColumnExpand(StateColumn, false);
         _tree.SetColumnCustomMinimumWidth(StateColumn, 30);
-        _tree.SetColumnExpand(NameColumn, true);
         _tree.ItemSelected += OnItemSelected;
         _tree.ItemMouseSelected += OnItemMouseSelected;
         column.AddChild(_tree);
 
+        column.AddChild(new HSeparator());
+        var legend = new HBoxContainer();
+        legend.AddThemeConstantOverride("separation", 6);
+        AddLegend(legend, "eye", "Shown");
+        AddLegend(legend, "eye-quiet", "Quiet");
+        AddLegend(legend, "eye-off", "Hidden");
+        column.AddChild(legend);
+
         var hint = new Label
         {
-            Text = "● shown  ◐ quiet  ○ hidden: click to cycle · right-click for ★ favorites and more",
+            Text = "Click an eye to cycle · right-click for ★ favorites and more",
             AutowrapMode = TextServer.AutowrapMode.WordSmart,
         };
-        hint.AddThemeFontSizeOverride("font_size", 11);
+        hint.AddThemeFontSizeOverride("font_size", 12);
         hint.AddThemeColorOverride("font_color", Palette.MutedText);
         column.AddChild(hint);
 
@@ -97,6 +111,27 @@ public partial class OutlinePanel : PanelContainer
         _context.AddItem("Show Everything", MenuShowAll);
         _context.IdPressed += OnContextMenu;
         AddChild(_context);
+    }
+
+    private static void AddLegend(HBoxContainer row, string icon, string text)
+    {
+        row.AddChild(UiKit.IconRect(icon, 16f, new Color(1f, 1f, 1f, 0.8f)));
+        var label = new Label { Text = text, VerticalAlignment = VerticalAlignment.Center };
+        label.AddThemeFontSizeOverride("font_size", 12);
+        label.AddThemeColorOverride("font_color", Palette.MutedText);
+        row.AddChild(label);
+        row.AddChild(new Control { CustomMinimumSize = new Vector2(8f, 0f) });
+    }
+
+    /// <summary>Expand or collapse every project and system (Favorites stay open).</summary>
+    private void SetAllCollapsed(bool collapsed)
+    {
+        if (_tree?.GetRoot() is not { } root) return;
+        foreach (var child in root.GetChildren())
+        {
+            if (child.GetMetadata(NameColumn).VariantType == Variant.Type.Nil) continue;   // the Favorites section
+            child.SetCollapsedRecursive(collapsed);
+        }
     }
 
     public void SetModel(GraphModel? model, Func<string, Visibility> stateOf, ISet<string> favorites)
@@ -175,10 +210,14 @@ public partial class OutlinePanel : PanelContainer
                 {
                     moleculeItem = _tree.CreateItem(root);
                     Register(moleculeItem, "molecule:" + molecule.Id, molecule.Name, _items);
+                    SetIcon(moleculeItem, "dot", Palette.MoleculeHue(molecule.Id));
+                    SetCount(moleculeItem, molecule.Atoms.Sum(a => a.Nodes.Count));
                 }
 
                 var atomItem = _tree.CreateItem(moleculeItem);
-                Register(atomItem, "atom:" + atom.Id, $"{atom.Name}  ({atom.Nodes.Count})", _items);
+                Register(atomItem, "atom:" + atom.Id, atom.Name, _items);
+                SetIcon(atomItem, AtomIcon(atom.Name));
+                SetCount(atomItem, atom.Nodes.Count);
                 atomItem.SetTooltipText(NameColumn, $"{atom.Name}: {atom.Nodes.Count} classes, valence {atom.Valence}");
                 atomItem.Collapsed = !filtering;
 
@@ -186,6 +225,7 @@ public partial class OutlinePanel : PanelContainer
                 {
                     var nodeItem = _tree.CreateItem(atomItem);
                     Register(nodeItem, "node:" + node.Info.Id, node.Info.Name, _items);
+                    SetIcon(nodeItem, "file");
                     nodeItem.SetTooltipText(NameColumn, $"{node.Info.FullName}\n{node.Info.Kind} · {node.Info.Visibility}");
                 }
             }
@@ -204,14 +244,19 @@ public partial class OutlinePanel : PanelContainer
         if (entries.Count == 0) return;
 
         var section = _tree!.CreateItem(root);
-        section.SetText(NameColumn, $"★ Favorites ({entries.Count})");
+        section.SetText(NameColumn, "Favorites");
         section.SetCustomColor(NameColumn, Palette.Gold);
-        section.SetSelectable(StateColumn, false);
+        SetIcon(section, "star");
+        SetCount(section, entries.Count);
         section.SetSelectable(NameColumn, false);
+        section.SetSelectable(CountColumn, false);
+        section.SetSelectable(StateColumn, false);
         foreach (var (key, name, kind) in entries)
         {
             var item = _tree.CreateItem(section);
             Register(item, key, $"{name}  · {kind}", _favoriteItems);
+            if (key.StartsWith("molecule:", StringComparison.Ordinal)) SetIcon(item, "dot", Palette.MoleculeHue(key["molecule:".Length..]));
+            else SetIcon(item, key.StartsWith("atom:", StringComparison.Ordinal) ? AtomIcon(name!) : "file");
         }
     }
 
@@ -236,8 +281,9 @@ public partial class OutlinePanel : PanelContainer
     {
         item.SetText(NameColumn, _favorites.Contains(key) && index == _items ? "★ " + text : text);
         item.SetMetadata(NameColumn, key);
+        item.SetMetadata(CountColumn, key);
         item.SetMetadata(StateColumn, key);
-        item.SetTextAlignment(StateColumn, HorizontalAlignment.Center);
+        item.SetIconMaxWidth(StateColumn, IconSize);
         item.SetTooltipText(StateColumn, "Shown / Quiet / Hidden: click to cycle");
         index[key] = item;
         ApplyState(item, key);
@@ -246,18 +292,37 @@ public partial class OutlinePanel : PanelContainer
     private void ApplyState(TreeItem item, string key)
     {
         var state = _stateOf(key);
-        item.SetText(StateColumn, state switch
+        item.SetIcon(StateColumn, UiAssets.Icon(state switch
         {
-            Visibility.Quiet => "◐",
-            Visibility.Hidden => "○",
-            _ => "●",
-        });
-        item.SetCustomColor(StateColumn, state == Visibility.Shown ? Palette.Accent : Palette.MutedText);
+            Visibility.Quiet => "eye-quiet",
+            Visibility.Hidden => "eye-off",
+            _ => "eye",
+        }));
+        item.SetIconModulate(StateColumn, state == Visibility.Shown ? Colors.White : new Color(1f, 1f, 1f, 0.7f));
 
         var color = NameColor(key);
         if (state != Visibility.Shown) color = color.Darkened(state == Visibility.Hidden ? 0.6f : 0.35f);
         item.SetCustomColor(NameColumn, color);
     }
+
+    private static void SetIcon(TreeItem item, string icon, Color? tint = null)
+    {
+        item.SetIcon(NameColumn, UiAssets.Icon(icon));
+        item.SetIconMaxWidth(NameColumn, IconSize);
+        if (tint is { } color) item.SetIconModulate(NameColumn, color);
+    }
+
+    /// <summary>A small count badge in its own column.</summary>
+    private static void SetCount(TreeItem item, int count)
+    {
+        item.SetText(CountColumn, count.ToString("N0"));
+        item.SetTextAlignment(CountColumn, HorizontalAlignment.Center);
+        item.SetCustomBgColor(CountColumn, new Color(Palette.Accent, 0.14f));
+        item.SetCustomColor(CountColumn, UiKit.Text);
+    }
+
+    /// <summary>"(global)" and other unnamed systems get a globe; namespaces and folders a folder.</summary>
+    private static string AtomIcon(string name) => name.StartsWith('(') ? "globe" : "folder";
 
     private Color NameColor(string key)
     {

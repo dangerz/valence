@@ -84,8 +84,7 @@ public partial class SnapshotsDialog : ModalDialog
     {
         var comparing = entry.Path == _comparingPath;
         var panel = new PanelContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
-        panel.AddThemeStyleboxOverride("panel",
-            ValenceTheme.Box(ValenceTheme.PanelRaised, comparing ? Palette.Accent : Palette.PanelBorder, 1, 6, 8f));
+        panel.AddThemeStyleboxOverride("panel", UiAssets.Box(comparing ? Patch.Active : Patch.Panel, 12f, 8f));
         var row = new HBoxContainer();
         row.AddThemeConstantOverride("separation", 8);
         panel.AddChild(row);

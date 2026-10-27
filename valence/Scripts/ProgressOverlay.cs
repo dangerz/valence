@@ -33,7 +33,7 @@ public partial class ProgressOverlay : Control
         center.SetAnchorsPreset(LayoutPreset.FullRect);
         AddChild(center);
 
-        var panel = Hud.MakePanel(0.97f);
+        var panel = Hud.MakePanel(Patch.Accent, 18f);
         panel.CustomMinimumSize = new Vector2(620f, 0f);
         center.AddChild(panel);
 

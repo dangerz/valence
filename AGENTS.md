@@ -68,7 +68,7 @@ These are product guarantees. A change that breaks one will be rejected, however
 | What | Why |
 |---|---|
 | **git** | Churn, the "changed recently" glow and the git timeline. Without it, analysis still works, just without history. |
-| **Python 3** | Only to regenerate the app icon (`python3 tools/make_icon.py images/logo.png valence/images/icon.png 1024 --mark-only`). |
+| **Python 3** | Only to regenerate the app icon (`python3 tools/make_icon.py images/logo.png valence/images/icon.png 1024 --mark-only`) or the UI sheets (`tools/build_ui_sheets.py`, see its header). |
 | An IDE with C# support (Rider, VS Code + C# Dev Kit, Visual Studio) | Opening `valence/Valence.sln` (viewer + everything it uses) or `Valence.Tools.sln` (CLI, core, probes). |
 
 **Not needed:** Python, PHP or any other runtime for the languages Valence analyzes; Roslyn and
@@ -141,6 +141,8 @@ docs/plugin-protocol.md  THE contract: probe manifest, probe output, graph forma
 docs/ROADMAP.md          what's done, what's next, language order
 images/logo.png          the original logo
 tools/make_icon.py       rebuilds valence/images/icon.png from the logo (pure Python, --mark-only)
+tools/build_ui_sheets.py rebuilds valence/images/ui/{icons,panels}.png from images/ui-source/
+images/ui-source/        the original UI art: icon sheet, nine-patch panel sheet, the UI mockup
 
 src/Valence.Schema/      the JSON contract as C# classes (Model.cs) + serializer (ValenceJson.cs)
 src/Valence.Core/        analysis engine used by viewer and CLI
@@ -169,6 +171,9 @@ valence/                 the Godot 4.7 (.NET, C#) viewer
   Scripts/Hud.cs         all 2D UI built in code: menu bar, panels, filter/timeline bars, dialogs
   Scripts/ValenceTheme.cs  the one UI theme (bordered panels, menus, buttons, inputs, tree)
   Scripts/ModalDialog.cs   in-app bordered dialogs (About, Controls); SnapshotsDialog.cs builds on it
+  Scripts/UiAssets.cs    the UI sheets: Icon("name") (mipmapped atlas), Box(Patch.…) (nine-patches)
+  Scripts/UiKit.cs       shared pieces: icon buttons, titles, search fields, badges, pills, cards
+  Scripts/AxisGizmo.cs   the X/Y/Z gizmo in the 3D view's corner
   Scripts/*Panel.cs, ProgressOverlay.cs, PanelResizer.cs, RangeSlider.cs   UI pieces
   Scripts/GraphModel.cs  the loaded graph, indexed for the viewer
   Scripts/FlowSimulator.cs, SimulationView.cs   static simulation
@@ -178,7 +183,7 @@ valence/                 the Godot 4.7 (.NET, C#) viewer
                          SnapshotStore (save, list, rename via names.json, delete to trash)
   Scripts/AnalyzerLauncher.cs  runs the analysis in-process; registers the built-in probes
   Shaders/               atom cloud, bond flow, nucleon shaders
-  images/logo.png (boot splash), images/icon.png (app icon)
+  images/logo.png (boot splash), images/icon.png (app icon), images/ui/ (icon + panel sheets)
   samples/demo.valence.json  the startup demo graph
 ```
 
@@ -239,6 +244,12 @@ in `user://`.
   format or rule changes, `docs/plugin-protocol.md` in the same change.
 
 ---
+
+**UI style** (follow `images/ui-source/mockup.webp`): build controls with `UiKit` and style them
+with `UiAssets.Box(Patch.…)` nine-patches, not ad-hoc flat boxes; icons come from
+`UiAssets.Icon("name")`. A new icon goes in `tools/build_ui_sheets.py` (drawn in the same light-cyan
+stroke with a thin darker outline), appended to `ICON_NAMES` there and to `IconNames` in
+`UiAssets.cs`, then the sheet is rebuilt.
 
 ## 8. Writing C# that compiles first time (pitfalls we've hit)
 

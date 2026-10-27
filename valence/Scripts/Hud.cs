@@ -6,9 +6,26 @@ using Godot;
 
 namespace Valence.Viewer;
 
+/// <summary>What a left-drag in the 3D view does (the tool buttons in its corner).</summary>
+public enum ViewTool
+{
+    /// <summary>Click selects, drag orbits (the default).</summary>
+    Select,
+
+    /// <summary>Drag orbits; clicks don't select.</summary>
+    Orbit,
+
+    /// <summary>Drag pans.</summary>
+    Pan,
+
+    /// <summary>Drag up/down zooms.</summary>
+    Zoom,
+}
+
 /// <summary>
-/// Screen-space UI: a traditional menu bar, docked Outline (left) and Inspector (right) panels,
-/// a legend over the 3D view, a status bar, hover tooltips, and the analysis progress dialog.
+/// Screen-space UI: the title bar (logo, menus, repo pills), the Outline (left), the toolbar and the
+/// framed 3D view with its legend, axis gizmo and view tools (center), entry points / methods and
+/// the Inspector (right), the status bar, tooltips, dialogs and the analysis progress dialog.
 /// </summary>
 public partial class Hud : Control
 {
@@ -27,6 +44,7 @@ public partial class Hud : Control
     private const int ViewStopCompare = 27;
     private const int ViewUsageFilter = 28;
     private const int ViewOnlyDifferences = 29;
+    private const int ViewFullscreen = 30;
     private const int FileSnapshot = 4;
     private const int FileSnapshots = 5;
     private const int TimelineBuild10 = 110;
@@ -36,6 +54,38 @@ public partial class Hud : Control
     private const int TimelineHide = 114;
     private const int CompareBase = 2000;
     private const int CompareManage = CompareBase - 2;
+    private const int InspectorSummary = 300;
+    private const int InspectorCopyPath = 301;
+    private const int InspectorReveal = 302;
+    private const int ToolZoomIn = 310;
+    private const int ToolZoomOut = 311;
+
+    // The toolbar's lenses: each colors classes by a different question (same as View ▸ Color By).
+    private static readonly (ColorMode Mode, string Icon, string Text, string Tooltip)[] Lenses =
+    {
+        (ColorMode.Visibility, "graph", "Structure", "Public vs internal classes (protons and neutrons)"),
+        (ColorMode.Churn, "branch", "Changes", "Classes changed recently glow hot (git churn)"),
+        (ColorMode.Coupling, "layers", "Dependencies", "Classes many others depend on glow hot"),
+    };
+
+    private static readonly (ViewTool Tool, string Icon, string Tooltip)[] Tools =
+    {
+        (ViewTool.Select, "pointer", "Select: click to select, drag to orbit"),
+        (ViewTool.Orbit, "orbit", "Orbit: drag to turn the view (clicks don't select)"),
+        (ViewTool.Pan, "move", "Pan: drag to move the view"),
+        (ViewTool.Zoom, "zoom-in", "Zoom: drag up or down to zoom"),
+    };
+
+    private static readonly (string Key, string Icon, string Caption)[] SummaryCards =
+    {
+        ("projects", "cube", "Projects"),
+        ("systems", "layers", "Systems"),
+        ("classes", "file", "Classes"),
+        ("bonds", "link", "Bonds"),
+        ("cycles", "cycle", "Cycles"),
+        ("members", "users", "Members"),
+        ("links", "graph", "member links"),
+    };
 
     private static readonly float[] Brightnesses = { 0.25f, 0.5f, 0.75f, 1f, 1.25f };
 
@@ -75,7 +125,25 @@ public partial class Hud : Control
     private PopupMenu? _recentMenu;
     private PopupMenu? _colorMenu;
     private PopupMenu? _depthMenu;
-    private Label? _repoLabel;
+    private PanelContainer? _repoPill;
+    private PanelContainer? _branchPill;
+    private PanelContainer? _commitPill;
+    private Label? _repoName;
+    private Label? _branchName;
+    private Label? _commitName;
+    private string _repoRoot = "";
+    private PanelContainer? _outlineGutter;
+    private PanelContainer? _rightGutter;
+    private PanelContainer? _filterGutter;
+    private PanelContainer? _timelineGutter;
+    private PopupMenu? _filtersMenu;
+    private readonly Dictionary<ColorMode, Button> _tabs = new();
+    private VBoxContainer? _summary;
+    private Label? _summaryName;
+    private Label? _summaryPath;
+    private HBoxContainer? _summaryBranchRow;
+    private Label? _summaryBranch;
+    private readonly Dictionary<string, Label> _cards = new(StringComparer.Ordinal);
     private Label? _status;
     private Label? _selectionLabel;
     private PanelContainer? _inspector;
@@ -113,6 +181,14 @@ public partial class Hud : Control
     private const float MaxPanelWidth = 900f;
     public ProgressOverlay Progress { get; } = new();
 
+    /// <summary>X/Y/Z in the 3D view's corner; Main gives it the camera.</summary>
+    public AxisGizmo Gizmo { get; } = new();
+
+    public event Action<ViewTool>? ToolChanged;
+
+    /// <summary>Zoom by this factor (&lt;1 = in), from the view's ▾ menu.</summary>
+    public event Action<float>? ZoomStepRequested;
+
     public event Action<string>? SourceFolderChosen;
     public event Action<string>? GraphFileChosen;
     public event Action<string>? RecentFolderChosen;
@@ -143,6 +219,9 @@ public partial class Hud : Control
 
     /// <summary>File ▸ Snapshots… or Compare With Snapshot ▸ Manage Snapshots….</summary>
     public event Action? ManageSnapshotsRequested;
+
+    /// <summary>View ▸ Full Screen (F11, ⌃⌘F).</summary>
+    public event Action? FullscreenToggled;
 
     /// <summary>View ▸ Only Show Differences toggled (only enabled while comparing).</summary>
     public event Action<bool>? OnlyDifferencesChanged;
@@ -175,8 +254,9 @@ public partial class Hud : Control
     {
         SetAnchorsPreset(LayoutPreset.FullRect);
         MouseFilter = MouseFilterEnum.Ignore;
-        // Menus, popups and dialogs below inherit this.
+        // Menus, popups and dialogs below inherit the theme; icons shrink smoothly through mipmaps.
         Theme = ValenceTheme.Build();
+        TextureFilter = TextureFilterEnum.LinearWithMipmaps;
 
         var root = new VBoxContainer { MouseFilter = MouseFilterEnum.Ignore };
         root.SetAnchorsPreset(LayoutPreset.FullRect);
@@ -189,43 +269,63 @@ public partial class Hud : Control
         middle.AddThemeConstantOverride("separation", 0);
         root.AddChild(middle);
 
-        Outline.AddThemeStyleboxOverride("panel", PanelStyle(0.92f, 0));
+        // Left: the Outline, inside a gutter of app background.
+        Outline.AddThemeStyleboxOverride("panel", UiAssets.Box(Patch.Panel, 12f));
         Outline.CustomMinimumSize = new Vector2(Mathf.Clamp(outlineWidth, MinPanelWidth, MaxPanelWidth), 0f);
         Outline.Build();
         Outline.ItemChosen += meta => LinkClicked?.Invoke(meta);
         Outline.MouseEntered += () => PointerEnteredUi?.Invoke();
         Outline.Visible = showOutline;
-        middle.AddChild(Outline);
+        _outlineGutter = UiKit.Gutter(Outline, 8f, 8f, 0f, 8f);
+        middle.AddChild(_outlineGutter);
 
-        // The Outline's right border: drag to resize.
+        // The gap right of the Outline: drag to resize.
         _outlineResizer = new PanelResizer();
         _outlineResizer.Dragged += dx => ResizePanel(Outline, dx);
         _outlineResizer.DragFinished += RaiseWidthsChanged;
         _outlineResizer.MouseEntered += () => PointerEnteredUi?.Invoke();
         middle.AddChild(_outlineResizer);
 
-        // The 3D view shows through this area; it passes all input to the scene.
-        var viewport = new Control { MouseFilter = MouseFilterEnum.Ignore, SizeFlagsHorizontal = SizeFlags.ExpandFill };
-        middle.AddChild(viewport);
-        BuildLegend(viewport, showLegend);
+        // Center: the toolbar, the framed 3D view (it passes all input to the scene), then the bars.
+        var center = new VBoxContainer
+        {
+            MouseFilter = MouseFilterEnum.Ignore,
+            SizeFlagsHorizontal = SizeFlags.ExpandFill,
+            SizeFlagsVertical = SizeFlags.ExpandFill,
+        };
+        center.AddThemeConstantOverride("separation", 0);
+        middle.AddChild(center);
+        center.AddChild(BuildToolbar());
+        center.AddChild(BuildViewport(showLegend));
+        _filterGutter = UiKit.Gutter(BuildFilterBar(), 0f, 8f, 0f, 0f);
+        _filterGutter.Visible = false;
+        center.AddChild(_filterGutter);
+        _timelineGutter = UiKit.Gutter(BuildTimelineBar(), 0f, 8f, 0f, 0f);
+        _timelineGutter.Visible = false;
+        center.AddChild(_timelineGutter);
+        center.AddChild(new ColorRect
+        {
+            Color = UiKit.AppBackground,
+            CustomMinimumSize = new Vector2(0f, 8f),
+            MouseFilter = MouseFilterEnum.Ignore,
+        });
 
-        // The right column's left border: drag to resize (dragging left widens it).
+        // The gap left of the right column: drag to resize (dragging left widens it).
         _rightResizer = new PanelResizer();
         _rightResizer.Dragged += dx => ResizePanel(_rightColumn, -dx);
         _rightResizer.DragFinished += RaiseWidthsChanged;
         _rightResizer.MouseEntered += () => PointerEnteredUi?.Invoke();
         middle.AddChild(_rightResizer);
 
-        // Right column: Methods (with ▶ simulate buttons) above the Inspector.
+        // Right: entry points / methods (with ▶ simulate buttons) above the Inspector.
         _rightColumn = new VBoxContainer
         {
             CustomMinimumSize = new Vector2(Mathf.Clamp(rightWidth, MinPanelWidth, MaxPanelWidth), 0f),
             MouseFilter = MouseFilterEnum.Ignore,
         };
-        _rightColumn.AddThemeConstantOverride("separation", 0);
-        middle.AddChild(_rightColumn);
+        _rightColumn.AddThemeConstantOverride("separation", 8);
 
-        Methods.AddThemeStyleboxOverride("panel", PanelStyle(0.92f, 0, borderBottom: 2));
+        Methods.AddThemeStyleboxOverride("panel", UiAssets.Box(Patch.Panel, 12f));
         Methods.SizeFlagsVertical = SizeFlags.ExpandFill;
         Methods.SizeFlagsStretchRatio = 0.8f;
         Methods.Build();
@@ -235,10 +335,10 @@ public partial class Hud : Control
 
         BuildInspector(showInspector);
         _rightColumn.AddChild(_inspector!);
+        _rightGutter = UiKit.Gutter(_rightColumn, 0f, 8f, 8f, 8f);
+        middle.AddChild(_rightGutter);
         UpdateRightColumn();
 
-        root.AddChild(BuildFilterBar());
-        root.AddChild(BuildTimelineBar());
         root.AddChild(BuildStatusBar());
 
         BuildTooltip();
@@ -260,9 +360,21 @@ public partial class Hud : Control
 
     // ---------------------------------------------------------------- public API
 
-    public void SetRepo(string text)
+    /// <summary>The title bar's repo, branch and commit pills.</summary>
+    public void SetRepoInfo(string name, string root, string? branch, string? commit)
     {
-        if (_repoLabel != null) _repoLabel.Text = text;
+        _repoRoot = root;
+        if (_repoName != null) _repoName.Text = name;
+        if (_repoPill != null) _repoPill.TooltipText = root;
+        if (_branchName != null) _branchName.Text = branch ?? "";
+        if (_branchPill != null) _branchPill.Visible = !string.IsNullOrEmpty(branch);
+        var hasCommit = !string.IsNullOrEmpty(commit);
+        if (_commitName != null) _commitName.Text = hasCommit ? commit![..Math.Min(8, commit.Length)] : "";
+        if (_commitPill != null)
+        {
+            _commitPill.Visible = hasCommit;
+            _commitPill.TooltipText = commit ?? "";
+        }
     }
 
     public void SetStatus(string text)
@@ -275,11 +387,46 @@ public partial class Hud : Control
         if (_selectionLabel != null) _selectionLabel.Text = text;
     }
 
+    /// <summary>Selection, simulation or comparison details in the Inspector.</summary>
     public void ShowInfo(string bbcode)
     {
         if (_info == null) return;
+        if (_summary != null) _summary.Visible = false;
+        _info.Visible = true;
         _info.Text = bbcode;
         _info.ScrollToLine(0);
+    }
+
+    /// <summary>The Inspector with nothing selected: the repo and its stat cards.</summary>
+    public void ShowRepoSummary(GraphModel model)
+    {
+        if (_summary == null || _info == null) return;
+        var repo = model.Graph.Repo;
+        if (_summaryName != null) _summaryName.Text = repo.Name;
+        if (_summaryPath != null)
+        {
+            _summaryPath.Text = repo.Root;
+            _summaryPath.TooltipText = repo.Root;
+        }
+        var commit = string.IsNullOrEmpty(repo.Commit) ? "" : "  @ " + repo.Commit[..Math.Min(10, repo.Commit.Length)];
+        if (_summaryBranch != null) _summaryBranch.Text = (repo.Branch ?? "") + commit;
+        if (_summaryBranchRow != null) _summaryBranchRow.Visible = commit.Length > 0 || !string.IsNullOrEmpty(repo.Branch);
+
+        SetCard("projects", model.Molecules.Count);
+        SetCard("systems", model.AtomList.Count);
+        SetCard("classes", model.Nodes.Count);
+        SetCard("bonds", model.Bonds.Count);
+        SetCard("cycles", model.Bonds.Count(b => b.Covalent));
+        SetCard("members", model.Nodes.Values.Sum(n => n.Info.Members.Count));
+        SetCard("links", model.Graph.MemberEdges.Count);
+
+        _info.Visible = false;
+        _summary.Visible = true;
+    }
+
+    private void SetCard(string key, int value)
+    {
+        if (_cards.TryGetValue(key, out var label)) label.Text = value.ToString("N0");
     }
 
     public void SetReanalyzeEnabled(bool enabled) => SetDisabled(_fileMenu, FileReanalyze, !enabled);
@@ -368,24 +515,27 @@ public partial class Hud : Control
     }
 
     /// <summary>Stop Comparing and Only Show Differences only make sense while comparing.</summary>
+    public void SetFullscreen(bool on) => SetChecked(_viewMenu, ViewFullscreen, on);
+
     public void SetCompareActive(bool active)
     {
         SetDisabled(_viewMenu, ViewStopCompare, !active);
         SetDisabled(_viewMenu, ViewOnlyDifferences, !active);
+        SetDisabled(_filtersMenu, ViewOnlyDifferences, !active);
     }
 
     public void ShowTimeline(int frames)
     {
-        if (_timelineBar == null || _timelineSlider == null) return;
+        if (_timelineGutter == null || _timelineSlider == null) return;
         _suppressTimelineSlider = true;
         _timelineSlider.MaxValue = Math.Max(0, frames - 1);
         _suppressTimelineSlider = false;
-        _timelineBar.Visible = true;
+        _timelineGutter.Visible = true;
     }
 
     public void HideTimeline()
     {
-        if (_timelineBar != null) _timelineBar.Visible = false;
+        if (_timelineGutter != null) _timelineGutter.Visible = false;
     }
 
     public void SetTimelineFrame(int index, string label)
@@ -401,7 +551,7 @@ public partial class Hud : Control
 
     public void SetTimelinePlaying(bool playing)
     {
-        if (_timelinePlay != null) _timelinePlay.Text = playing ? "❚❚" : "▶";
+        if (_timelinePlay != null) _timelinePlay.Icon = UiAssets.Icon(playing ? "pause" : "play");
     }
 
     private void OnCompare(int id)
@@ -432,16 +582,17 @@ public partial class Hud : Control
 
     public void SetUsageFilterVisible(bool visible)
     {
-        if (_filterBar == null) return;
-        _filterBar.Visible = visible;
+        if (_filterGutter == null) return;
+        _filterGutter.Visible = visible;
         SetChecked(_viewMenu, ViewUsageFilter, visible);
+        SetChecked(_filtersMenu, ViewUsageFilter, visible);
         RaiseUsageFilter();
     }
 
     private Control BuildFilterBar()
     {
-        _filterBar = new PanelContainer { Visible = false };
-        _filterBar.AddThemeStyleboxOverride("panel", PanelStyle(0.96f, 0, 6f, borderTop: 2));
+        _filterBar = new PanelContainer();
+        _filterBar.AddThemeStyleboxOverride("panel", UiAssets.Box(Patch.Panel, 14f, 6f));
         _filterBar.MouseEntered += () => PointerEnteredUi?.Invoke();
 
         var row = new HBoxContainer();
@@ -477,9 +628,7 @@ public partial class Hud : Control
         _filterCount.AddThemeColorOverride("font_color", Palette.MutedText);
         row.AddChild(_filterCount);
 
-        var close = new Button { Text = "✕", Flat = true, TooltipText = "Turn the filter off" };
-        close.Pressed += () => SetUsageFilterVisible(false);
-        row.AddChild(close);
+        row.AddChild(UiKit.IconButton("close", "Turn the filter off", () => SetUsageFilterVisible(false), 28f, flat: true));
         return _filterBar;
     }
 
@@ -487,13 +636,13 @@ public partial class Hud : Control
     {
         if (_filterRange == null) return;
         if (_filterValue != null) _filterValue.Text = $"{_filterRange.Low} – {_filterRange.High}";
-        UsageFilterChanged?.Invoke(_filterBar?.Visible ?? false, _filterRange.Low, _filterRange.High, _filterMode?.Selected == 1);
+        UsageFilterChanged?.Invoke(_filterGutter?.Visible ?? false, _filterRange.Low, _filterRange.High, _filterMode?.Selected == 1);
     }
 
     private Control BuildTimelineBar()
     {
-        _timelineBar = new PanelContainer { Visible = false };
-        _timelineBar.AddThemeStyleboxOverride("panel", PanelStyle(0.96f, 0, 6f, borderTop: 2));
+        _timelineBar = new PanelContainer();
+        _timelineBar.AddThemeStyleboxOverride("panel", UiAssets.Box(Patch.Panel, 14f, 6f));
         _timelineBar.MouseEntered += () => PointerEnteredUi?.Invoke();
 
         var row = new HBoxContainer();
@@ -504,8 +653,7 @@ public partial class Hud : Control
         title.AddThemeColorOverride("font_color", Palette.Accent);
         row.AddChild(title);
 
-        _timelinePlay = new Button { Text = "▶", Flat = true, TooltipText = "Play through history", CustomMinimumSize = new Vector2(32f, 0f) };
-        _timelinePlay.Pressed += () => TimelinePlayToggled?.Invoke();
+        _timelinePlay = UiKit.IconButton("play", "Play through history", () => TimelinePlayToggled?.Invoke(), 30f, flat: true);
         row.AddChild(_timelinePlay);
 
         _timelineSlider = new HSlider
@@ -528,9 +676,7 @@ public partial class Hud : Control
         _timelineLabel.AddThemeFontSizeOverride("font_size", 12);
         row.AddChild(_timelineLabel);
 
-        var close = new Button { Text = "✕", Flat = true, TooltipText = "Hide the timeline (back to the current code)" };
-        close.Pressed += () => TimelineHideRequested?.Invoke();
-        row.AddChild(close);
+        row.AddChild(UiKit.IconButton("close", "Hide the timeline (back to the current code)", () => TimelineHideRequested?.Invoke(), 28f, flat: true));
         return _timelineBar;
     }
 
@@ -562,6 +708,7 @@ public partial class Hud : Control
 
     public void SetColorMode(ColorMode mode)
     {
+        foreach (var (each, tab) in _tabs) tab.SetPressedNoSignal(each == mode);
         if (_colorMenu == null) return;
         foreach (var (each, _) in ColorModes) SetChecked(_colorMenu, (int)each, each == mode);
     }
@@ -626,10 +773,11 @@ public partial class Hud : Control
         Outline.FocusFilter();
     }
 
-    public static PanelContainer MakePanel(float alpha = 0.88f)
+    /// <summary>A free-standing panel (legend, progress dialog) in one of the nine-patch styles.</summary>
+    public static PanelContainer MakePanel(Patch patch = Patch.Panel, float content = 12f)
     {
         var panel = new PanelContainer();
-        panel.AddThemeStyleboxOverride("panel", PanelStyle(alpha, 8, 10f, 1, 1, 1, 1));
+        panel.AddThemeStyleboxOverride("panel", UiAssets.Box(patch, content));
         return panel;
     }
 
@@ -638,12 +786,20 @@ public partial class Hud : Control
     private Control BuildMenuBar()
     {
         var bar = new PanelContainer();
-        bar.AddThemeStyleboxOverride("panel", PanelStyle(0.96f, 0, 4f, borderBottom: 2));
+        bar.AddThemeStyleboxOverride("panel", UiKit.Strip(14f, 6f, lineBottom: true));
         bar.MouseEntered += () => PointerEnteredUi?.Invoke();
 
         var row = new HBoxContainer();
         row.AddThemeConstantOverride("separation", 12);
         bar.AddChild(row);
+
+        row.AddChild(UiKit.IconRect("logo", 28f));
+        var wordmark = new Label { Text = "VALENCE", VerticalAlignment = VerticalAlignment.Center };
+        wordmark.AddThemeFontOverride("font", UiKit.WordmarkFont(6));
+        wordmark.AddThemeFontSizeOverride("font_size", 19);
+        wordmark.AddThemeColorOverride("font_color", Colors.White);
+        row.AddChild(wordmark);
+        row.AddChild(new VSeparator { CustomMinimumSize = new Vector2(14f, 0f) });
 
         // Drawn in the window, not the macOS global menu (hidden in exclusive fullscreen).
         var menus = new MenuBar { PreferGlobalMenu = false };
@@ -724,6 +880,9 @@ public partial class Hud : Control
         _viewMenu.AddCheckItem("Methods", ViewMethods);
         _viewMenu.AddCheckItem("Inspector", ViewInspector);
         _viewMenu.AddCheckItem("Legend", ViewLegend);
+        _viewMenu.AddSeparator();
+        _viewMenu.AddCheckItem("Full Screen", ViewFullscreen);
+        SetShortcut(_viewMenu, ViewFullscreen, Key.F11, command: false);
         _viewMenu.IdPressed += id => OnMenu((int)id);
         menus.AddChild(_viewMenu);
 
@@ -786,26 +945,194 @@ public partial class Hud : Control
         help.IdPressed += id => OnMenu((int)id);
         menus.AddChild(help);
 
-        row.AddChild(new Control { SizeFlagsHorizontal = SizeFlags.ExpandFill, MouseFilter = MouseFilterEnum.Ignore });
-        _repoLabel = new Label { Text = "No graph loaded", VerticalAlignment = VerticalAlignment.Center };
-        _repoLabel.AddThemeColorOverride("font_color", Palette.MutedText);
-        row.AddChild(_repoLabel);
+        // The pills sit right; on a narrow window they're clipped instead of widening the layout.
+        var clip = new ScrollContainer
+        {
+            HorizontalScrollMode = ScrollContainer.ScrollMode.ShowNever,
+            VerticalScrollMode = ScrollContainer.ScrollMode.Disabled,
+            SizeFlagsHorizontal = SizeFlags.ExpandFill,
+        };
+        row.AddChild(clip);
+        var pills = new HBoxContainer { Alignment = BoxContainer.AlignmentMode.End, SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        pills.AddThemeConstantOverride("separation", 10);
+        clip.AddChild(pills);
+        _repoPill = UiKit.Pill("database", out var repoName);
+        _repoName = repoName;
+        _repoName.Text = "No graph loaded";
+        pills.AddChild(_repoPill);
+        _branchPill = UiKit.Pill("branch", out var branchName);
+        _branchName = branchName;
+        _branchPill.Visible = false;
+        pills.AddChild(_branchPill);
+        _commitPill = UiKit.Pill("clock", out var commitName);
+        _commitName = commitName;
+        _commitPill.Visible = false;
+        pills.AddChild(_commitPill);
         return bar;
+    }
+
+    /// <summary>Lenses (Structure / Changes / Dependencies), Filters and Fit view, above the 3D view.</summary>
+    private Control BuildToolbar()
+    {
+        var bar = new PanelContainer();
+        bar.AddThemeStyleboxOverride("panel", UiKit.Strip(0f, 8f));
+        bar.MouseEntered += () => PointerEnteredUi?.Invoke();
+
+        // Clipped rather than widening the window's layout when the center is narrow.
+        var clip = new ScrollContainer
+        {
+            HorizontalScrollMode = ScrollContainer.ScrollMode.ShowNever,
+            VerticalScrollMode = ScrollContainer.ScrollMode.Disabled,
+        };
+        bar.AddChild(clip);
+        var row = new HBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        row.AddThemeConstantOverride("separation", 6);
+        clip.AddChild(row);
+
+        foreach (var (mode, icon, text, tooltip) in Lenses)
+        {
+            var tab = UiKit.TextButton(icon, text, tooltip);
+            tab.ToggleMode = true;
+            tab.Pressed += () => ColorModeChanged?.Invoke(mode);
+            _tabs[mode] = tab;
+            row.AddChild(tab);
+        }
+
+        row.AddChild(new VSeparator { CustomMinimumSize = new Vector2(16f, 0f) });
+
+        var filters = new MenuButton
+        {
+            Text = "Filters  ▾",
+            Icon = UiAssets.Icon("filter"),
+            Flat = false,
+            TooltipText = "Usage filter, only differences, show everything",
+            CustomMinimumSize = new Vector2(0f, 34f),
+        };
+        _filtersMenu = filters.GetPopup();
+        _filtersMenu.AddCheckItem("Filter by Usage (used-by count)", ViewUsageFilter);
+        _filtersMenu.AddCheckItem("Only Show Differences", ViewOnlyDifferences);
+        _filtersMenu.AddSeparator();
+        _filtersMenu.AddItem("Show Everything (clear hide/quiet)", ViewShowAll);
+        _filtersMenu.IdPressed += id => OnMenu((int)id);
+        SetDisabled(_filtersMenu, ViewOnlyDifferences, true);
+        row.AddChild(filters);
+
+        row.AddChild(UiKit.TextButton("focus", "Fit view", "Frame everything (F)", () => FrameAllRequested?.Invoke()));
+        return bar;
+    }
+
+    /// <summary>
+    /// The 3D view's frame (border only: the scene shows through and gets all input), with the legend,
+    /// the axis gizmo and the view tools on top.
+    /// </summary>
+    private Control BuildViewport(bool showLegend)
+    {
+        var frame = new Control
+        {
+            MouseFilter = MouseFilterEnum.Ignore,
+            SizeFlagsHorizontal = SizeFlags.ExpandFill,
+            SizeFlagsVertical = SizeFlags.ExpandFill,
+        };
+        var border = new Panel { MouseFilter = MouseFilterEnum.Ignore };
+        border.SetAnchorsPreset(LayoutPreset.FullRect);
+        border.AddThemeStyleboxOverride("panel", UiAssets.Box(Patch.Focus, 0f));
+        frame.AddChild(border);
+
+        BuildLegend(frame, showLegend);
+
+        Gizmo.AnchorTop = 1f;
+        Gizmo.AnchorBottom = 1f;
+        Gizmo.OffsetLeft = 10f;
+        Gizmo.OffsetRight = 106f;
+        Gizmo.OffsetTop = -106f;
+        Gizmo.OffsetBottom = -10f;
+        frame.AddChild(Gizmo);
+
+        var tools = new HBoxContainer { MouseFilter = MouseFilterEnum.Ignore };
+        tools.AddThemeConstantOverride("separation", 6);
+        tools.AnchorLeft = 1f;
+        tools.AnchorRight = 1f;
+        tools.AnchorTop = 1f;
+        tools.AnchorBottom = 1f;
+        tools.OffsetLeft = -14f;
+        tools.OffsetRight = -14f;
+        tools.OffsetTop = -14f;
+        tools.OffsetBottom = -14f;
+        tools.GrowHorizontal = GrowDirection.Begin;
+        tools.GrowVertical = GrowDirection.Begin;
+        frame.AddChild(tools);
+
+        var group = new ButtonGroup();
+        foreach (var (tool, icon, tooltip) in Tools)
+        {
+            var button = UiKit.IconButton(icon, tooltip, () => ToolChanged?.Invoke(tool), 36f);
+            button.ToggleMode = true;
+            button.ButtonGroup = group;
+            button.ButtonPressed = tool == ViewTool.Select;
+            button.MouseEntered += () => PointerEnteredUi?.Invoke();
+            tools.AddChild(button);
+        }
+
+        var more = UiKit.IconMenu("chevron-down", "More view actions", 36f);
+        more.Flat = false;
+        var popup = more.GetPopup();
+        popup.AddItem("Zoom In", ToolZoomIn);
+        popup.AddItem("Zoom Out", ToolZoomOut);
+        popup.AddSeparator();
+        popup.AddItem("Fit View", ViewFrameAll);
+        popup.AddItem("Reset Layout", ViewResetLayout);
+        popup.IdPressed += id =>
+        {
+            switch ((int)id)
+            {
+                case ToolZoomIn:
+                    ZoomStepRequested?.Invoke(0.8f);
+                    break;
+                case ToolZoomOut:
+                    ZoomStepRequested?.Invoke(1.25f);
+                    break;
+                default:
+                    OnMenu((int)id);
+                    break;
+            }
+        };
+        tools.AddChild(more);
+        return frame;
     }
 
     private void BuildInspector(bool visible)
     {
         _inspector = new PanelContainer { SizeFlagsVertical = SizeFlags.ExpandFill, Visible = visible };
-        _inspector.AddThemeStyleboxOverride("panel", PanelStyle(0.92f, 0));
+        _inspector.AddThemeStyleboxOverride("panel", UiAssets.Box(Patch.Panel, 14f, 12f));
         _inspector.MouseEntered += () => PointerEnteredUi?.Invoke();
 
         var column = new VBoxContainer();
-        column.AddThemeConstantOverride("separation", 6);
+        column.AddThemeConstantOverride("separation", 10);
         _inspector.AddChild(column);
 
-        var title = new Label { Text = "Inspector" };
-        title.AddThemeColorOverride("font_color", Palette.Accent);
-        column.AddChild(title);
+        var header = UiKit.Header("focus", UiKit.Title("Inspector"));
+        header.AddChild(UiKit.Spacer());
+        var menu = UiKit.IconMenu("more", "More");
+        var popup = menu.GetPopup();
+        popup.AddItem("Back to Summary", InspectorSummary);
+        popup.AddSeparator();
+        popup.AddItem("Copy Repo Path", InspectorCopyPath);
+        popup.AddItem("Open Repo Folder", InspectorReveal);
+        popup.IdPressed += id => OnInspectorMenu((int)id);
+        header.AddChild(menu);
+        column.AddChild(header);
+
+        // The body scrolls, so the stat cards never push the window's layout taller.
+        var scroll = new ScrollContainer
+        {
+            SizeFlagsVertical = SizeFlags.ExpandFill,
+            HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled,
+        };
+        column.AddChild(scroll);
+        var body = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill, SizeFlagsVertical = SizeFlags.ExpandFill };
+        body.AddThemeConstantOverride("separation", 10);
+        scroll.AddChild(body);
+        body.AddChild(BuildSummary());
 
         _info = new RichTextLabel
         {
@@ -813,22 +1140,95 @@ public partial class Hud : Control
             ScrollActive = true,
             SelectionEnabled = true,
             SizeFlagsVertical = SizeFlags.ExpandFill,
+            Visible = false,
         };
         _info.AddThemeFontSizeOverride("normal_font_size", 13);
         _info.AddThemeFontSizeOverride("bold_font_size", 13);
         _info.MetaClicked += meta => LinkClicked?.Invoke(meta.AsString());
-        column.AddChild(_info);
+        body.AddChild(_info);
+    }
+
+    /// <summary>Repo name, path, branch and the stat cards (shown when nothing is selected).</summary>
+    private Control BuildSummary()
+    {
+        _summary = new VBoxContainer { Visible = false, SizeFlagsVertical = SizeFlags.ExpandFill };
+        _summary.AddThemeConstantOverride("separation", 8);
+
+        var nameRow = new HBoxContainer();
+        nameRow.AddThemeConstantOverride("separation", 10);
+        nameRow.AddChild(UiKit.IconRect("database", 28f));
+        _summaryName = new Label
+        {
+            TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis,
+            SizeFlagsHorizontal = SizeFlags.ExpandFill,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        _summaryName.AddThemeFontOverride("font", UiKit.BoldFont());
+        _summaryName.AddThemeFontSizeOverride("font_size", 22);
+        _summaryName.AddThemeColorOverride("font_color", Colors.White);
+        nameRow.AddChild(_summaryName);
+        _summary.AddChild(nameRow);
+
+        _summaryPath = new Label { TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis };
+        _summaryPath.AddThemeFontSizeOverride("font_size", 13);
+        _summaryPath.AddThemeColorOverride("font_color", Palette.MutedText);
+        _summary.AddChild(_summaryPath);
+
+        _summaryBranchRow = new HBoxContainer();
+        _summaryBranchRow.AddThemeConstantOverride("separation", 6);
+        _summaryBranchRow.AddChild(UiKit.IconRect("branch", 16f, new Color(1f, 1f, 1f, 0.75f)));
+        _summaryBranch = new Label();
+        _summaryBranch.AddThemeFontSizeOverride("font_size", 13);
+        _summaryBranch.AddThemeColorOverride("font_color", Palette.MutedText);
+        _summaryBranchRow.AddChild(_summaryBranch);
+        _summary.AddChild(_summaryBranchRow);
+
+        var grid = new GridContainer { Columns = 2 };
+        grid.AddThemeConstantOverride("h_separation", 8);
+        grid.AddThemeConstantOverride("v_separation", 8);
+        _summary.AddChild(grid);
+        foreach (var (key, icon, caption) in SummaryCards)
+        {
+            var card = UiKit.Card(icon, caption, out var value);
+            _cards[key] = value;
+            // The last card spans both columns.
+            if (key == SummaryCards[^1].Key) _summary.AddChild(card);
+            else grid.AddChild(card);
+        }
+
+        var hint = new Label
+        {
+            Text = "Click a system to open it, or pick anything from the Outline.",
+            AutowrapMode = TextServer.AutowrapMode.WordSmart,
+        };
+        hint.AddThemeFontSizeOverride("font_size", 12);
+        hint.AddThemeColorOverride("font_color", Palette.MutedText);
+        _summary.AddChild(hint);
+        return _summary;
+    }
+
+    private void OnInspectorMenu(int id)
+    {
+        switch (id)
+        {
+            case InspectorSummary:
+                ClearSelectionRequested?.Invoke();
+                break;
+            case InspectorCopyPath when _repoRoot.Length > 0:
+                DisplayServer.ClipboardSet(_repoRoot);
+                SetStatus($"Copied {_repoRoot}");
+                break;
+            case InspectorReveal when Directory.Exists(_repoRoot):
+                OS.ShellOpen(_repoRoot);
+                break;
+        }
     }
 
     private void BuildLegend(Control parent, bool visible)
     {
         _legend = MakePanel();
-        _legend.AnchorTop = 1f;
-        _legend.AnchorBottom = 1f;
-        _legend.OffsetLeft = 12f;
-        _legend.OffsetTop = -12f;
-        _legend.OffsetBottom = -12f;
-        _legend.GrowVertical = GrowDirection.Begin;
+        _legend.OffsetLeft = 14f;
+        _legend.OffsetTop = 14f;
         _legend.CustomMinimumSize = new Vector2(400f, 0f);
         _legend.Visible = visible;
         _legend.MouseEntered += () => PointerEnteredUi?.Invoke();
@@ -867,24 +1267,41 @@ public partial class Hud : Control
     private Control BuildStatusBar()
     {
         var bar = new PanelContainer();
-        bar.AddThemeStyleboxOverride("panel", PanelStyle(0.96f, 0, 4f, borderTop: 2));
+        bar.AddThemeStyleboxOverride("panel", UiKit.Strip(14f, 7f, lineTop: true));
         bar.MouseEntered += () => PointerEnteredUi?.Invoke();
 
         var row = new HBoxContainer();
-        row.AddThemeConstantOverride("separation", 16);
+        row.AddThemeConstantOverride("separation", 10);
         bar.AddChild(row);
 
-        _status = new Label { Text = "", ClipText = true, SizeFlagsHorizontal = SizeFlags.ExpandFill };
-        _status.AddThemeFontSizeOverride("font_size", 12);
+        var dim = new Color(1f, 1f, 1f, 0.8f);
+        row.AddChild(UiKit.IconRect("info", 18f, dim));
+        _status = new Label
+        {
+            Text = "",
+            TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis,
+            SizeFlagsHorizontal = SizeFlags.ExpandFill,
+            SizeFlagsStretchRatio = 1.6f,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        _status.AddThemeFontSizeOverride("font_size", 13);
         row.AddChild(_status);
 
-        _selectionLabel = new Label { Text = "" };
-        _selectionLabel.AddThemeFontSizeOverride("font_size", 12);
+        _selectionLabel = new Label { Text = "", VerticalAlignment = VerticalAlignment.Center };
+        _selectionLabel.AddThemeFontSizeOverride("font_size", 13);
         _selectionLabel.AddThemeColorOverride("font_color", Palette.Accent);
         row.AddChild(_selectionLabel);
 
-        var hint = new Label { Text = "Drag orbit · Right-drag pan · Scroll zoom · Click open/select · Shift-drag move · Esc back" };
-        hint.AddThemeFontSizeOverride("font_size", 12);
+        row.AddChild(new VSeparator { CustomMinimumSize = new Vector2(12f, 0f) });
+        row.AddChild(UiKit.IconRect("mouse", 18f, dim));
+        var hint = new Label
+        {
+            Text = "Drag orbit · Right-drag pan · Scroll zoom · Click open/select · Shift-drag move · Esc back",
+            TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis,
+            SizeFlagsHorizontal = SizeFlags.ExpandFill,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        hint.AddThemeFontSizeOverride("font_size", 13);
         hint.AddThemeColorOverride("font_color", Palette.MutedText);
         row.AddChild(hint);
         return bar;
@@ -893,7 +1310,7 @@ public partial class Hud : Control
     private void BuildTooltip()
     {
         _tooltip = new PanelContainer { MouseFilter = MouseFilterEnum.Ignore, Visible = false, TopLevel = true, ZIndex = 10 };
-        _tooltip.AddThemeStyleboxOverride("panel", PanelStyle(0.95f, 6, 6f, 1, 1, 1, 1));
+        _tooltip.AddThemeStyleboxOverride("panel", UiAssets.Box(Patch.Panel, 10f, 6f));
         _tooltipLabel = new Label { MouseFilter = MouseFilterEnum.Ignore };
         _tooltipLabel.AddThemeFontSizeOverride("font_size", 13);
         _tooltip.AddChild(_tooltipLabel);
@@ -1034,16 +1451,20 @@ public partial class Hud : Control
             case FileSnapshots:
                 ManageSnapshotsRequested?.Invoke();
                 break;
+            case ViewFullscreen:
+                FullscreenToggled?.Invoke();
+                break;
             case ViewOnlyDifferences:
             {
-                var index = _viewMenu!.GetItemIndex(ViewOnlyDifferences);
-                var on = !_viewMenu.IsItemChecked(index);
-                _viewMenu.SetItemChecked(index, on);
+                // In both View and the toolbar's Filters menu.
+                var on = !IsChecked(_viewMenu, ViewOnlyDifferences);
+                SetChecked(_viewMenu, ViewOnlyDifferences, on);
+                SetChecked(_filtersMenu, ViewOnlyDifferences, on);
                 OnlyDifferencesChanged?.Invoke(on);
                 break;
             }
             case ViewUsageFilter:
-                SetUsageFilterVisible(!(_filterBar?.Visible ?? false));
+                SetUsageFilterVisible(!(_filterGutter?.Visible ?? false));
                 break;
             case TimelineBuild10:
                 TimelineBuildRequested?.Invoke(10);
@@ -1151,11 +1572,14 @@ public partial class Hud : Control
         PanelsChanged?.Invoke(Outline.Visible, Methods.Visible, _inspector?.Visible ?? false, _legend?.Visible ?? false);
     }
 
-    /// <summary>The right column takes no space when both of its panels are hidden; borders follow their panels.</summary>
+    /// <summary>A side column (and its gutter and resize gap) takes no space when its panels are hidden.</summary>
     private void UpdateRightColumn()
     {
-        if (_rightColumn != null) _rightColumn.Visible = Methods.Visible || (_inspector?.Visible ?? false);
-        if (_rightResizer != null) _rightResizer.Visible = _rightColumn?.Visible ?? false;
+        var right = Methods.Visible || (_inspector?.Visible ?? false);
+        if (_rightColumn != null) _rightColumn.Visible = right;
+        if (_rightGutter != null) _rightGutter.Visible = right;
+        if (_rightResizer != null) _rightResizer.Visible = right;
+        if (_outlineGutter != null) _outlineGutter.Visible = Outline.Visible;
         if (_outlineResizer != null) _outlineResizer.Visible = Outline.Visible;
     }
 
@@ -1176,6 +1600,13 @@ public partial class Hud : Control
         if (menu == null) return;
         var index = menu.GetItemIndex(id);
         if (index >= 0) menu.SetItemChecked(index, value);
+    }
+
+    private static bool IsChecked(PopupMenu? menu, int id)
+    {
+        if (menu == null) return false;
+        var index = menu.GetItemIndex(id);
+        return index >= 0 && menu.IsItemChecked(index);
     }
 
     private static void SetDisabled(PopupMenu? menu, int id, bool value)
@@ -1204,24 +1635,6 @@ public partial class Hud : Control
 
     private static string DefaultGraphDir() => Path.Combine(
         System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile), ".valence", "graphs");
-
-    private static StyleBoxFlat PanelStyle(
-        float alpha, int corner, float margin = 10f,
-        int borderLeft = 0, int borderRight = 0, int borderTop = 0, int borderBottom = 0)
-    {
-        var style = new StyleBoxFlat
-        {
-            BgColor = new Color(0.06f, 0.08f, 0.12f, alpha),
-            BorderColor = Palette.PanelBorder,
-            BorderWidthLeft = borderLeft,
-            BorderWidthRight = borderRight,
-            BorderWidthTop = borderTop,
-            BorderWidthBottom = borderBottom,
-        };
-        style.SetCornerRadiusAll(corner);
-        style.SetContentMarginAll(margin);
-        return style;
-    }
 
     private static RichTextLabel Rich(string bbcode)
     {
