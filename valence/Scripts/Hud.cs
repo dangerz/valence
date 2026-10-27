@@ -927,19 +927,17 @@ public partial class Hud : Control
         // About: the logo above the description, at a fixed size.
         _aboutDialog = new ModalDialog();
         _aboutDialog.Build("About Valence", 480f);
-        if (ResourceLoader.Exists(LogoPath))
+        if (ResourceLoader.Exists(IconPath))
         {
-            // The logo is dark on off-white; a light card keeps it readable on the dark dialog.
-            var card = new PanelContainer { SizeFlagsHorizontal = SizeFlags.ShrinkCenter };
-            card.AddThemeStyleboxOverride("panel", ValenceTheme.Box(LogoBackground, Palette.PanelBorder, 1, 10, 0f));
-            card.AddChild(new TextureRect
+            // The app icon: its own rounded light body and transparent corners sit well on the dark dialog.
+            _aboutDialog.Body.AddChild(new TextureRect
             {
-                Texture = GD.Load<Texture2D>(LogoPath),
+                Texture = GD.Load<Texture2D>(IconPath),
                 ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
                 StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
-                CustomMinimumSize = new Vector2(220f, 220f),
+                CustomMinimumSize = new Vector2(240f, 240f),
+                SizeFlagsHorizontal = SizeFlags.ShrinkCenter,
             });
-            _aboutDialog.Body.AddChild(card);
         }
         _aboutDialog.AddText(
             "Valence draws a codebase as chemistry: projects are molecules, systems are atoms, " +
@@ -983,10 +981,8 @@ public partial class Hud : Control
         dialog.Body.AddChild(grid);
     }
 
-    /// <summary>The logo's own off-white, so it sits on a card instead of a hard-edged square.</summary>
-    private static readonly Color LogoBackground = new(0.992f, 0.988f, 0.976f);
-
-    private const string LogoPath = "res://images/logo.png";
+    /// <summary>The logo as a macOS-style icon (tools/make_icon.py); logo.png stays the flat art for the splash.</summary>
+    private const string IconPath = "res://images/icon.png";
 
     // ---------------------------------------------------------------- menu handling
 
