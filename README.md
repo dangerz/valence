@@ -58,6 +58,10 @@ them in source order, event and signal wiring, and entry points (Godot `_Process
 
 Side panels can be resized by dragging their borders; widths are remembered.
 **View ▸ Brightness** turns the atom clouds, bonds, electrons and bloom up or down.
+**View ▸ Filter by Usage** adds a range slider over each class's used-by count (how many other
+classes depend on it): drag the two handles to show only classes in that range, e.g. 0–0 for
+classes nothing uses, or the top of the range for the most depended-on ones. Others are hidden or
+ghosted; systems with nothing in range disappear.
 **View ▸ Labels** (or **L**): *All* shows every label, *Near Mouse* (default) only around the
 pointer, *On Click* only the selected class and opened system. A running simulation overrides
 this: only classes the flow has reached are labeled.

@@ -25,6 +25,7 @@ public partial class Hud : Control
     private const int ViewMethods = 25;
     private const int ViewShowAll = 26;
     private const int ViewStopCompare = 27;
+    private const int ViewUsageFilter = 28;
     private const int FileSnapshot = 4;
     private const int TimelineBuild10 = 110;
     private const int TimelineBuild25 = 111;
@@ -100,6 +101,11 @@ public partial class Hud : Control
     private Label? _timelineLabel;
     private Button? _timelinePlay;
     private bool _suppressTimelineSlider;
+    private PanelContainer? _filterBar;
+    private RangeSlider? _filterRange;
+    private OptionButton? _filterMode;
+    private Label? _filterValue;
+    private Label? _filterCount;
     private const float MinPanelWidth = 180f;
     private const float MaxPanelWidth = 900f;
     public ProgressOverlay Progress { get; } = new();
@@ -136,6 +142,9 @@ public partial class Hud : Control
     public event Action? TimelineHideRequested;
     public event Action<int>? TimelineFrameChanged;
     public event Action? TimelinePlayToggled;
+
+    /// <summary>Usage filter: active, min used-by, max used-by, ghost (else hide).</summary>
+    public event Action<bool, int, int, bool>? UsageFilterChanged;
 
     /// <summary>Outline width, right column width (after a border drag).</summary>
     public event Action<float, float>? PanelWidthsChanged;
@@ -214,6 +223,7 @@ public partial class Hud : Control
         _rightColumn.AddChild(_inspector!);
         UpdateRightColumn();
 
+        root.AddChild(BuildFilterBar());
         root.AddChild(BuildTimelineBar());
         root.AddChild(BuildStatusBar());
 
@@ -377,6 +387,81 @@ public partial class Hud : Control
     {
         var index = id - CompareBase;
         if (index >= 0 && index < _snapshotPaths.Count) CompareRequested?.Invoke(_snapshotPaths[index]);
+    }
+
+    /// <summary>Resets the range to 0..the highest used-by count in the graph (nothing filtered).</summary>
+    public void SetUsageFilterRange(int max)
+    {
+        if (_filterRange == null) return;
+        _filterRange.MaxValue = max;
+        _filterRange.SetRange(0, _filterRange.MaxValue);
+        RaiseUsageFilter();
+    }
+
+    /// <summary>"1,234 of 5,000 classes" next to the slider.</summary>
+    public void SetUsageFilterCount(string text)
+    {
+        if (_filterCount != null) _filterCount.Text = text;
+    }
+
+    public void SetUsageFilterVisible(bool visible)
+    {
+        if (_filterBar == null) return;
+        _filterBar.Visible = visible;
+        SetChecked(_viewMenu, ViewUsageFilter, visible);
+        RaiseUsageFilter();
+    }
+
+    private Control BuildFilterBar()
+    {
+        _filterBar = new PanelContainer { Visible = false };
+        _filterBar.AddThemeStyleboxOverride("panel", PanelStyle(0.96f, 0, 6f, borderTop: 2));
+        _filterBar.MouseEntered += () => PointerEnteredUi?.Invoke();
+
+        var row = new HBoxContainer();
+        row.AddThemeConstantOverride("separation", 10);
+        _filterBar.AddChild(row);
+
+        var title = new Label { Text = "Filter: used by", VerticalAlignment = VerticalAlignment.Center };
+        title.AddThemeColorOverride("font_color", Palette.Accent);
+        title.TooltipText = "How many other classes depend on a class (calls, creates, inherits, has a field of it, …)";
+        row.AddChild(title);
+
+        _filterRange = new RangeSlider
+        {
+            SizeFlagsHorizontal = SizeFlags.ExpandFill,
+            SizeFlagsVertical = SizeFlags.ShrinkCenter,
+            TooltipText = "Drag the handles to narrow the used-by range",
+        };
+        _filterRange.RangeChanged += (_, _) => RaiseUsageFilter();
+        _filterRange.MouseEntered += () => PointerEnteredUi?.Invoke();
+        row.AddChild(_filterRange);
+
+        _filterValue = new Label { CustomMinimumSize = new Vector2(80f, 0f), VerticalAlignment = VerticalAlignment.Center };
+        row.AddChild(_filterValue);
+
+        _filterMode = new OptionButton();
+        _filterMode.AddItem("Hide others", 0);
+        _filterMode.AddItem("Ghost others", 1);
+        _filterMode.ItemSelected += _ => RaiseUsageFilter();
+        row.AddChild(_filterMode);
+
+        _filterCount = new Label { CustomMinimumSize = new Vector2(200f, 0f), VerticalAlignment = VerticalAlignment.Center };
+        _filterCount.AddThemeFontSizeOverride("font_size", 12);
+        _filterCount.AddThemeColorOverride("font_color", Palette.MutedText);
+        row.AddChild(_filterCount);
+
+        var close = new Button { Text = "✕", Flat = true, TooltipText = "Turn the filter off" };
+        close.Pressed += () => SetUsageFilterVisible(false);
+        row.AddChild(close);
+        return _filterBar;
+    }
+
+    private void RaiseUsageFilter()
+    {
+        if (_filterRange == null) return;
+        if (_filterValue != null) _filterValue.Text = $"{_filterRange.Low} – {_filterRange.High}";
+        UsageFilterChanged?.Invoke(_filterBar?.Visible ?? false, _filterRange.Low, _filterRange.High, _filterMode?.Selected == 1);
     }
 
     private Control BuildTimelineBar()
@@ -604,6 +689,8 @@ public partial class Hud : Control
         _compareMenu.IdPressed += id => OnCompare((int)id);
         _viewMenu.AddSubmenuNodeItem("Compare With Snapshot", _compareMenu);
         _viewMenu.AddItem("Stop Comparing", ViewStopCompare);
+        _viewMenu.AddSeparator();
+        _viewMenu.AddCheckItem("Filter by Usage (used-by count)", ViewUsageFilter);
         _viewMenu.AddSeparator();
         _viewMenu.AddCheckItem("Outline", ViewOutline);
         _viewMenu.AddCheckItem("Methods", ViewMethods);
@@ -861,6 +948,9 @@ public partial class Hud : Control
                 break;
             case ViewStopCompare:
                 StopCompareRequested?.Invoke();
+                break;
+            case ViewUsageFilter:
+                SetUsageFilterVisible(!(_filterBar?.Visible ?? false));
                 break;
             case TimelineBuild10:
                 TimelineBuildRequested?.Invoke(10);

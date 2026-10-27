@@ -69,6 +69,25 @@ public partial class Main : Node3D
     private HashSet<string> _favorites = new(StringComparer.Ordinal);
     private Godot.Environment? _environment;
     private LabelMode _labelMode = LabelMode.NearMouse;
+
+    // View ▸ Filter by Usage: show classes used by between min and max other classes.
+    private bool _usageFilterActive;
+    private int _usageMin;
+    private int _usageMax = int.MaxValue;
+    private bool _usageGhost;
+
+    private bool PassesUsageFilter(NodeData node) =>
+        !_usageFilterActive || (node.FanIn >= _usageMin && node.FanIn <= _usageMax);
+
+    /// <summary>Opacity multiplier for classes outside the usage range: 0 (hide) or the quiet fade (ghost).</summary>
+    private float UsageFactor(bool passes) => passes ? 1f : _usageGhost ? _quietFade : 0f;
+
+    private void UpdateUsageFilterCount()
+    {
+        if (_model == null) return;
+        var shown = _model.Nodes.Values.Count(PassesUsageFilter);
+        _hud.SetUsageFilterCount(_usageFilterActive ? $"{shown:N0} of {_model.Nodes.Count:N0} classes" : "");
+    }
     private float _brightness = 0.75f;
 
     // Snapshot comparison (View ▸ Compare With): added/changed classes vs a saved snapshot.
@@ -260,6 +279,15 @@ public partial class Main : Node3D
             _settings.Save();
         };
         _hud.LabelModeChanged += SetLabelMode;
+        _hud.UsageFilterChanged += (active, min, max, ghost) =>
+        {
+            _usageFilterActive = active;
+            _usageMin = min;
+            _usageMax = max;
+            _usageGhost = ghost;
+            ApplyVisibility();
+            UpdateUsageFilterCount();
+        };
         _hud.SnapshotRequested += TakeSnapshot;
         _hud.CompareRequested += StartCompare;
         _hud.StopCompareRequested += StopCompare;
@@ -389,6 +417,7 @@ public partial class Main : Node3D
         _hud.Outline.SetModel(_model, StateOf, _favorites);
         UpdateLegend();
         ApplyVisibility();
+        _hud.SetUsageFilterRange(_model.MaxFanIn); // resets the range; re-applies visibility if the filter is on
         FrameAll(true);
         ShowSummary();
 
@@ -1021,14 +1050,18 @@ public partial class Main : Node3D
                 // Timeline: only classes that existed at the shown commit (and their systems) are drawn.
                 var present = _timelinePresent;
                 var atomExists = present == null || atom.Nodes.Any(n => present.Contains(n.Info.Id));
+                // Usage filter: a system with no classes in the range is hidden/ghosted as a whole.
+                var atomPassesUsage = atom.Nodes.Any(PassesUsageFilter);
                 atom.UserOpacity = OpacityOf(atomState);
-                atom.Opacity = atom.UserOpacity * UntouchedFactor(_revealedAtoms.Contains(atom)) * (atomExists ? 1f : 0f);
+                atom.Opacity = atom.UserOpacity * UntouchedFactor(_revealedAtoms.Contains(atom)) * (atomExists ? 1f : 0f)
+                               * UsageFactor(atomPassesUsage);
                 atom.View?.SetOpacity(atom.Opacity);
                 foreach (var node in atom.Nodes)
                 {
                     var exists = present == null || present.Contains(node.Info.Id);
                     node.UserOpacity = OpacityOf(Most(atomState, StateOf("node:" + node.Info.Id)));
-                    node.Opacity = node.UserOpacity * UntouchedFactor(_heat.ContainsKey(node)) * (exists ? 1f : 0f);
+                    node.Opacity = node.UserOpacity * UntouchedFactor(_heat.ContainsKey(node)) * (exists ? 1f : 0f)
+                                   * UsageFactor(PassesUsageFilter(node));
                 }
             }
         }
