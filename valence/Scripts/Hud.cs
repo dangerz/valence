@@ -1455,8 +1455,15 @@ public partial class Hud : Control
                 "It only reads the folder you point it at. Nothing is built, run or written there.",
                 HorizontalAlignment.Center, 13)
             .AddThemeColorOverride("font_color", Palette.MutedText);
+        // Keep this credit: the NOTICE file's AGPL section 7(b) term requires it in every version.
         _aboutDialog.AddText("By Roy El-Rayes and Claude", HorizontalAlignment.Center, 14)
             .AddThemeColorOverride("font_color", UiKit.TitleColor);
+        // AGPL "Appropriate Legal Notices": copyright, no warranty, and the license.
+        _aboutDialog.AddText(
+                "Copyright © 2026 Roy El-Rayes. Free software under the GNU Affero General Public License v3 " +
+                "(see LICENSE and NOTICE), with absolutely no warranty.",
+                HorizontalAlignment.Center, 12)
+            .AddThemeColorOverride("font_color", Palette.MutedText);
         AddChild(_aboutDialog);
 
         Snapshots.BuildList();

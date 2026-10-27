@@ -125,6 +125,10 @@ maintainer says otherwise.
 - **Report honestly.** If something is unverified (it always is until the maintainer builds it),
   say so. If the maintainer pastes a log, read it line by line and explain what it shows.
 - **Ask before anything outward-facing** (publishing, posting, sending) or anything hard to undo.
+- **License:** Valence is AGPL-3.0 with one additional term in `NOTICE`. Contributions are
+  accepted under the same license. Never remove or alter the About dialog's credit ("By Roy El-Rayes
+  and Claude") or its copyright/license notice, and don't add dependencies whose license isn't
+  compatible with the AGPL (MIT, BSD, Apache-2.0 and LGPL are fine; ask about anything else).
 - **Commit messages:** a short summary line, a blank line, then `-` bullets of what changed and
   why. Add your tool's attribution trailer if it uses one.
 
@@ -133,8 +137,10 @@ maintainer says otherwise.
 ## 5. Repository map
 
 ```
-README.md                user-facing overview, controls, read-only guarantees
+README.md                user-facing overview, controls, read-only guarantees, license summary
 AGENTS.md                this file
+LICENSE                  GNU AGPL v3 (the official text; never edit it)
+NOTICE                   copyright, and the AGPL section 7(b) term that keeps the About credit
 build.sh                 optional: publishes the CLI and the standalone C# probe to dist/
 Valence.Tools.sln        solution for the non-Godot projects (CLI, core, probes)
 docs/plugin-protocol.md  THE contract: probe manifest, probe output, graph format, edge kinds

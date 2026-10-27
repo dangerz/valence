@@ -1,0 +1,35 @@
+Valence: a read-only 3D map of a codebase
+Copyright (C) 2026 Roy El-Rayes
+
+This program is free software: you can redistribute it and/or modify it
+under the terms of the GNU Affero General Public License as published by
+the Free Software Foundation, version 3 of the License (the full text is in
+the LICENSE file), together with the additional term below.
+
+This program is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
+for more details.
+
+
+Additional term under section 7(b) of the GNU AGPL version 3
+------------------------------------------------------------
+
+Author attribution. The program displays the author attribution
+
+    By Roy El-Rayes and Claude
+
+in its About dialog, alongside its Appropriate Legal Notices. You must
+preserve this attribution, unaltered and legible, in every copy and every
+modified version of the program you convey. If a modified version has no
+About dialog, the attribution must appear wherever that version displays its
+Appropriate Legal Notices. You may add attributions for your own
+contributions next to it, but not in place of it.
+
+
+Third-party components
+----------------------
+
+Valence uses the Godot Engine, Roslyn (Microsoft.CodeAnalysis) and
+TreeSitter.DotNet with its bundled tree-sitter grammars, each under the MIT
+License and each keeping its own copyright notice.

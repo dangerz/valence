@@ -186,3 +186,15 @@ The buttons in the view's corner pick what a left-drag does: **select** (click s
 | **Esc** | back out one level |
 | **⌘F** / Outline filter | find a class or system by name |
 | **⌘O** / **⌘⇧O** / **⌘R** | open source folder / open graph / re-analyze |
+
+## License
+
+Copyright (C) 2026 Roy El-Rayes. Valence is free software under the
+[GNU Affero General Public License v3](LICENSE), with one additional term (section 7(b), in
+[NOTICE](NOTICE)): every copy and modified version must keep the About dialog's attribution,
+"By Roy El-Rayes and Claude".
+
+In short: you may use Valence for anything (including at work), study it, change it and share it.
+If you share a modified version, or run one as a service others use over a network, you must
+publish its source under the same license and keep the attribution. It comes with no warranty.
+Contributions are accepted under the same license.
