@@ -169,6 +169,17 @@ churn, **Dependencies**: coupling, **Risk**: where the next change is most likel
 as View ▸ Color By), opens **Filters** and **Fit view**. Risk ranks each class by recent churn ×
 how many classes depend on it × size (each as a percentile in the repo; without git, dependents ×
 size). The Inspector lists the **Top risks**, and a selected class shows what drives its score.
+View ▸ Color By also has **Reach** (classes no entry point runs), **Authors** (how much of the
+recent change came from AI agents or bots, by commit author or `Co-authored-by`) and **Trust** (how
+much of a class's linking is inferred rather than certain).
+
+The **Insights** menu builds reports from the graph, each with clickable classes, **Show Only
+These** (filter the 3D view to the report; Filters ▸ Clear Spotlight undoes it) and Markdown export:
+**Blast Radius** (what depends on the selection, the compared changes or the last 14 days of
+changes, and which entry points reach them), **Unreached Code**, **Cycles** (with the lighter
+direction to cut), **Coverage Matrix** (systems × triggers), **Abstractions** (single-implementation
+interfaces, wide dispatch), **System Metrics** (instability, abstractness, distance) and a
+**Reading Guide** for code you didn't write.
 With a class or system selected, **Hide Unrelated** appears there too: everything the selection
 doesn't link to (within View ▸ Link Depth hops) is hidden until you turn it off.
 The buttons in the view's corner pick what a left-drag does: **select** (click selects, drag orbits),

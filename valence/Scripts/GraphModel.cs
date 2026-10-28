@@ -35,6 +35,10 @@ public sealed class NodeData
 
     /// <summary>The Risk lens's score and what drives it (<see cref="RiskScores"/>).</summary>
     public RiskScore Risk { get; set; } = RiskScore.None;
+
+    /// <summary>Links in and out (not counting nesting), and the share that's inferred (the Trust lens).</summary>
+    public int LinkCount { get; set; }
+    public float InferredShare { get; set; }
     public List<EdgeInfo> Outgoing { get; } = new();
     public List<EdgeInfo> Incoming { get; } = new();
 
@@ -169,6 +173,10 @@ public sealed class GraphModel
     /// <summary>The riskiest classes, highest first (Inspector ▸ Top risks).</summary>
     public List<NodeData> TopRisks { get; } = new();
 
+    /// <summary>Classes each trigger's entry points reach, and all of them together (the Reach lens).</summary>
+    public Dictionary<string, HashSet<NodeData>> ReachByTrigger { get; } = new(StringComparer.Ordinal);
+    public HashSet<NodeData> Reached { get; } = new();
+
     public bool HasGit => Graph.Repo.ChurnWindowDays != null;
 
     /// <summary>When the graph was generated (unix seconds); recency is measured against this, not "now".</summary>
@@ -242,6 +250,8 @@ public sealed class GraphModel
         model.MaxChurn = model.Nodes.Values.Select(n => n.Metric(MetricKeys.Churn)).DefaultIfEmpty(0).Max();
         model.MaxFanIn = model.Nodes.Values.Select(n => n.FanIn).DefaultIfEmpty(0).Max();
         RiskScores.Compute(model);
+        Insights.ComputeReach(model);
+        Insights.ComputeTrust(model);
         return model;
     }
 

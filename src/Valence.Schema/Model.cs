@@ -133,6 +133,28 @@ public static class MetricKeys
     public const string Commits = "commits";
     public const string Churn = "churn";
     public const string LastChanged = "lastChanged";
+
+    /// <summary>People who changed it in the churn window.</summary>
+    public const string Authors = "authors";
+
+    /// <summary>Share of its changed lines by the person who changed it most (0..1).</summary>
+    public const string TopAuthorShare = "topAuthorShare";
+
+    /// <summary>Share of its changed lines from commits by AI agents or bots, as author or co-author (0..1).</summary>
+    public const string AgentShare = "agentShare";
+}
+
+/// <summary>Well-known node attribute keys. Probes and the core may add any others.</summary>
+public static class AttributeKeys
+{
+    /// <summary>"true" for abstract classes (and protocols / ABCs).</summary>
+    public const string Abstract = "abstract";
+
+    /// <summary>Who changed it most in the churn window (git author name).</summary>
+    public const string TopAuthor = "topAuthor";
+
+    /// <summary>Comma-separated modules outside the repo that its file imports.</summary>
+    public const string ExternalImports = "externalImports";
 }
 
 /// <summary>probe.json — describes a language plugin and how to invoke it.</summary>

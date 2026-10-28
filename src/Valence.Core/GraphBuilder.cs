@@ -123,7 +123,8 @@ internal static class GraphBuilder
         foreach (var node in nodes)
         {
             var commits = new HashSet<int>();
-            long churn = 0, lastChanged = 0;
+            long churn = 0, lastChanged = 0, agentLines = 0;
+            var authors = new Dictionary<string, long>(StringComparer.Ordinal);
             var files = node.Files.Count > 0 ? node.Files : new List<string> { node.File };
             foreach (var file in files)
             {
@@ -131,10 +132,21 @@ internal static class GraphBuilder
                 commits.UnionWith(history.Commits);
                 churn += history.Churn;
                 lastChanged = Math.Max(lastChanged, history.LastChanged);
+                agentLines += history.AgentLines;
+                foreach (var (author, lines) in history.AuthorLines) authors[author] = authors.GetValueOrDefault(author) + lines;
             }
             node.Metrics[MetricKeys.Commits] = commits.Count;
             node.Metrics[MetricKeys.Churn] = churn;
             if (lastChanged > 0) node.Metrics[MetricKeys.LastChanged] = lastChanged;
+
+            // Authorship over the same window: who knows this code, and how much of it agents wrote.
+            var total = authors.Values.Sum();
+            if (total <= 0) continue;
+            var top = authors.OrderByDescending(kv => kv.Value).ThenBy(kv => kv.Key, StringComparer.Ordinal).First();
+            node.Metrics[MetricKeys.Authors] = authors.Count;
+            node.Metrics[MetricKeys.TopAuthorShare] = (double)top.Value / total;
+            node.Metrics[MetricKeys.AgentShare] = (double)agentLines / total;
+            node.Attributes[AttributeKeys.TopAuthor] = top.Key;
         }
     }
 

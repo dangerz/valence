@@ -5,6 +5,12 @@ internal sealed class FileHistory
     public HashSet<int> Commits { get; } = new();
     public long Churn { get; set; }
     public long LastChanged { get; set; }
+
+    /// <summary>Changed lines by author name.</summary>
+    public Dictionary<string, long> AuthorLines { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>Changed lines from commits an AI agent or bot authored or co-authored.</summary>
+    public long AgentLines { get; set; }
 }
 
 /// <summary>
@@ -46,10 +52,21 @@ internal sealed class GitHistory
         return history;
     }
 
+    // Authors and co-authors that are AI agents or bots (matched case-insensitively in name or email).
+    private static readonly string[] AgentMarkers =
+    {
+        "[bot]", "bot@", "dependabot", "renovate", "github-actions", "copilot", "claude", "anthropic",
+        "openai", "codex", "chatgpt", "devin", "cursoragent", "cursor agent", "aider", "sweep", "gemini", "jules",
+    };
+
+    internal static bool IsAgent(string text) =>
+        AgentMarkers.Any(marker => text.Contains(marker, StringComparison.OrdinalIgnoreCase));
+
     public void LoadChurn(int days, Action<string> log)
     {
+        // @@<hash> <time>\t<author>\t<email>\t<co-authors>, then numstat lines.
         var output = Git(_root, "log", $"--since={days}.days.ago", "--numstat", "--no-renames",
-            "--format=@@%H %at", "--", ".");
+            "--format=@@%H %at%x09%an%x09%ae%x09%(trailers:key=Co-authored-by,valueonly,separator=%x2C)", "--", ".");
         if (output == null)
         {
             log("git log failed; skipping churn");
@@ -58,6 +75,8 @@ internal sealed class GitHistory
 
         var commitIndex = -1;
         long commitTime = 0;
+        var author = "";
+        var agent = false;
         foreach (var raw in output.Split('\n'))
         {
             var line = raw.TrimEnd('\r');
@@ -65,8 +84,13 @@ internal sealed class GitHistory
             if (line.StartsWith("@@", StringComparison.Ordinal))
             {
                 commitIndex++;
-                var space = line.LastIndexOf(' ');
-                long.TryParse(line[(space + 1)..], out commitTime);
+                var fields = line.Split('\t');
+                var space = fields[0].LastIndexOf(' ');
+                long.TryParse(fields[0][(space + 1)..], out commitTime);
+                author = fields.Length > 1 ? fields[1] : "";
+                var email = fields.Length > 2 ? fields[2] : "";
+                var coAuthors = fields.Length > 3 ? fields[3] : "";
+                agent = IsAgent(author) || IsAgent(email) || IsAgent(coAuthors);
                 continue;
             }
 
@@ -85,9 +109,12 @@ internal sealed class GitHistory
                 file = new FileHistory();
                 Files[path] = file;
             }
+            var lines = ParseCount(parts[0]) + ParseCount(parts[1]);
             file.Commits.Add(commitIndex);
-            file.Churn += ParseCount(parts[0]) + ParseCount(parts[1]);
+            file.Churn += lines;
             file.LastChanged = Math.Max(file.LastChanged, commitTime);
+            if (author.Length > 0) file.AuthorLines[author] = file.AuthorLines.GetValueOrDefault(author) + lines;
+            if (agent) file.AgentLines += lines;
         }
         log($"git: {commitIndex + 1} commits in the last {days} days touched {Files.Count} files");
     }

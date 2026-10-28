@@ -45,6 +45,8 @@ public partial class Hud : Control
     private const int ViewUsageFilter = 28;
     private const int ViewOnlyDifferences = 29;
     private const int ViewFullscreen = 30;
+    private const int FilterClearSpotlight = 31;
+    private const int InsightBase = 400;
     private const int FileSnapshot = 4;
     private const int FileSnapshots = 5;
     private const int TimelineBuild10 = 110;
@@ -115,6 +117,9 @@ public partial class Hud : Control
         (ColorMode.Churn, "Churn (recent git changes)"),
         (ColorMode.Coupling, "Coupling (how many depend on it)"),
         (ColorMode.Risk, "Risk (churn × dependents × size)"),
+        (ColorMode.Reach, "Reach (what no entry point runs)"),
+        (ColorMode.Authors, "Authors (changed by AI agents or bots)"),
+        (ColorMode.Trust, "Trust (how much linking is inferred)"),
     };
 
     private readonly List<string> _recentFolders = new();
@@ -190,6 +195,15 @@ public partial class Hud : Control
 
     /// <summary>The flow chart drawer under the 3D view; Main fills it and handles its events.</summary>
     public FlowDrawer Flow { get; } = new();
+
+    /// <summary>An Insights menu report was asked for.</summary>
+    public event Action<InsightKind>? InsightRequested;
+
+    /// <summary>Filters ▸ Clear Spotlight (undo a report's "Show Only These").</summary>
+    public event Action? SpotlightCleared;
+
+    /// <summary>The Insights report window; Main fills it and handles its events.</summary>
+    public ReportDialog Reports { get; } = new();
 
     /// <summary>Simulate ▸ Flow Chart toggled.</summary>
     public event Action<bool>? FlowChartToggled;
@@ -634,6 +648,8 @@ public partial class Hud : Control
     /// <summary>Stop Comparing and Only Show Differences only make sense while comparing.</summary>
     public void SetFullscreen(bool on) => SetChecked(_viewMenu, ViewFullscreen, on);
 
+    public void SetSpotlightActive(bool active) => SetDisabled(_filtersMenu, FilterClearSpotlight, !active);
+
     /// <param name="enabled">Simulate ▸ Flow Chart is on (the drawer shows whenever there's a chart).</param>
     /// <param name="visible">The drawer itself is showing.</param>
     public void SetFlowChart(bool enabled, bool visible)
@@ -883,6 +899,15 @@ public partial class Hud : Control
                 : "No git history in this graph",
             ColorMode.Coupling =>
                 $"[color={Palette.Html(Palette.Heat(0))}]●[/color] few → [color={Palette.Html(Palette.Heat(1))}]●[/color] many classes depend on it",
+            ColorMode.Reach =>
+                $"[color={Palette.Html(Palette.Heat(0.08f))}]●[/color] reached from an entry point   " +
+                $"[color={Palette.Html(Palette.Heat(0.72f))}]●[/color] not reached, used by unreached code   " +
+                $"[color={Palette.Html(Palette.Heat(1f))}]●[/color] not reached, nothing uses it",
+            ColorMode.Authors => hasGit
+                ? $"[color={Palette.Html(Palette.Heat(0))}]●[/color] people → [color={Palette.Html(Palette.Heat(1))}]●[/color] AI agents / bots: who made the last {churnDays} days of changes (grey: unchanged)"
+                : "No git history in this graph",
+            ColorMode.Trust =>
+                $"[color={Palette.Html(Palette.Heat(0))}]●[/color] links certain → [color={Palette.Html(Palette.Heat(1))}]●[/color] links inferred (type hints, guesses): how far to trust the map here",
             ColorMode.Risk => hasGit
                 ? $"[color={Palette.Html(Palette.Heat(0))}]●[/color] low → [color={Palette.Html(Palette.Heat(1))}]●[/color] high risk = changed a lot in the last {churnDays} days × many classes depend on it × size"
                 : $"[color={Palette.Html(Palette.Heat(0))}]●[/color] low → [color={Palette.Html(Palette.Heat(1))}]●[/color] high risk = many classes depend on it × size (no git history)",
@@ -1081,6 +1106,24 @@ public partial class Hud : Control
         _simulateMenu.IdPressed += id => OnMenu((int)id);
         menus.AddChild(_simulateMenu);
 
+        // Insights: reports built from the graph (blast radius, unreached code, cycles…).
+        var insights = new PopupMenu { Name = "Insights" };
+        var blast = new PopupMenu { Name = "BlastRadius" };
+        blast.AddItem("From the Selection", InsightBase + (int)InsightKind.BlastFromSelection);
+        blast.AddItem("From the Compared Changes", InsightBase + (int)InsightKind.BlastFromComparison);
+        blast.AddItem("From Recent Changes (14 days)", InsightBase + (int)InsightKind.BlastFromRecentChanges);
+        blast.IdPressed += id => InsightRequested?.Invoke((InsightKind)((int)id - InsightBase));
+        insights.AddSubmenuNodeItem("Blast Radius", blast);
+        insights.AddItem("Unreached Code", InsightBase + (int)InsightKind.UnreachedCode);
+        insights.AddItem("Cycles", InsightBase + (int)InsightKind.Cycles);
+        insights.AddItem("Coverage Matrix", InsightBase + (int)InsightKind.Coverage);
+        insights.AddItem("Abstractions", InsightBase + (int)InsightKind.Abstractions);
+        insights.AddItem("System Metrics", InsightBase + (int)InsightKind.SystemMetrics);
+        insights.AddSeparator();
+        insights.AddItem("Reading Guide", InsightBase + (int)InsightKind.ReadingGuide);
+        insights.IdPressed += id => InsightRequested?.Invoke((InsightKind)((int)id - InsightBase));
+        menus.AddChild(insights);
+
         var timeline = new PopupMenu { Name = "Timeline" };
         timeline.AddItem("Build Timeline: 10 commits", TimelineBuild10);
         timeline.AddItem("Build Timeline: 25 commits", TimelineBuild25);
@@ -1183,6 +1226,8 @@ public partial class Hud : Control
         _filtersMenu.AddCheckItem("Only Show Differences", ViewOnlyDifferences);
         _filtersMenu.AddSeparator();
         _filtersMenu.AddItem("Show Everything (clear hide/quiet)", ViewShowAll);
+        _filtersMenu.AddItem("Clear Spotlight (a report's Show Only These)", FilterClearSpotlight);
+        SetDisabled(_filtersMenu, FilterClearSpotlight, true);
         _filtersMenu.IdPressed += id => OnMenu((int)id);
         SetDisabled(_filtersMenu, ViewOnlyDifferences, true);
         row.AddChild(filters);
@@ -1573,6 +1618,10 @@ public partial class Hud : Control
             .AddThemeColorOverride("font_color", Palette.MutedText);
         AddChild(_aboutDialog);
 
+        Reports.BuildReport();
+        Reports.LinkClicked += meta => LinkClicked?.Invoke(meta);
+        AddChild(Reports);
+
         Snapshots.BuildList();
         AddChild(Snapshots);
     }
@@ -1634,6 +1683,9 @@ public partial class Hud : Control
                 break;
             case ViewFullscreen:
                 FullscreenToggled?.Invoke();
+                break;
+            case FilterClearSpotlight:
+                SpotlightCleared?.Invoke();
                 break;
             case SimFlowChart:
                 FlowChartToggled?.Invoke(!IsChecked(_simulateMenu, SimFlowChart));

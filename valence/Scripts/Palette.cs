@@ -13,6 +13,15 @@ public enum ColorMode
 
     /// <summary>Churn × dependents × size, as percentiles (<see cref="RiskScores"/>).</summary>
     Risk,
+
+    /// <summary>Hot: no entry point reaches it (<see cref="Insights.ComputeReach"/>).</summary>
+    Reach,
+
+    /// <summary>Hot: changed mostly by AI agents or bots in the churn window.</summary>
+    Authors,
+
+    /// <summary>Hot: most of its links are inferred, not certain.</summary>
+    Trust,
 }
 
 public static class Palette

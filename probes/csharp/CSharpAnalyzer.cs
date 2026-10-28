@@ -260,6 +260,7 @@ internal sealed partial class CSharpAnalyzer
                     Line = decl.GetLocation().GetLineSpan().StartLinePosition.Line + 1,
                     Container = type.ContainingType is { } outer ? IdOf(outer) : null,
                 };
+                if (type.IsAbstract && type.TypeKind == TypeKind.Class) node.Attributes[AttributeKeys.Abstract] = "true";
                 CountMembers(type, node.Metrics);
                 _nodes[id] = node;
                 _typeSymbols.Add(type);

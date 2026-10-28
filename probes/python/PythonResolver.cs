@@ -103,6 +103,31 @@ internal sealed class PythonResolver
         context.Report(phase, files.Count, files.Count);
     }
 
+    /// <summary>
+    /// Notes on every nucleon of a file which modules outside the repo that file imports
+    /// (<see cref="AttributeKeys.ExternalImports"/>), so the inspector can show what code leans on.
+    /// </summary>
+    public void MarkExternalImports()
+    {
+        foreach (var file in _project.Files)
+        {
+            var external = file.Imports.Values.Concat(file.Wildcards)
+                .Where(i => !i.IsRepoPath && ModuleOf(file, i).Module == null)
+                .Select(i => i.Module.Split('.')[0])
+                .Where(name => name.Length > 0)
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(name => name, StringComparer.Ordinal)
+                .Take(15)
+                .ToList();
+            if (external.Count == 0) continue;
+            var text = string.Join(", ", external);
+            if (file.Node != null) file.Node.Attributes[AttributeKeys.ExternalImports] = text;
+            foreach (var cls in file.Classes.Values.SelectMany(AllNested)) cls.Node.Attributes[AttributeKeys.ExternalImports] = text;
+        }
+
+        static IEnumerable<PyClass> AllNested(PyClass cls) => new[] { cls }.Concat(cls.Nested.Values.SelectMany(AllNested));
+    }
+
     /// <summary>(resolved inside the repo, outside it) over every import statement.</summary>
     public (int Internal, int External) CountImports()
     {

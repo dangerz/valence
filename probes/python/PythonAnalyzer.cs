@@ -98,6 +98,7 @@ internal sealed class PythonAnalyzer
             Warn($"{_filesWithErrors.Count} files have syntax errors (parsed around them), e.g. " +
                  string.Join(", ", _filesWithErrors.Take(5)));
         }
+        resolver.MarkExternalImports();
         var (internalImports, externalImports) = resolver.CountImports();
         var byKind = project.Edges
             .GroupBy(e => e.Kind)

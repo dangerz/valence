@@ -32,6 +32,7 @@ internal sealed class PythonExtractor
     private static readonly Regex DottedName = new(@"^[A-Za-z_][\w]*(\.[A-Za-z_][\w]*)*$", RegexOptions.Compiled);
     private static readonly Regex NameToken = new(@"[A-Za-z_][\w]*(\.[A-Za-z_][\w]*)*", RegexOptions.Compiled);
     private static readonly Regex Spaces = new(@"\s", RegexOptions.Compiled);
+    private static readonly Regex AbstractBase = new(@"\b(?:ABC|ABCMeta|Protocol)\b", RegexOptions.Compiled);
 
     // Entry-point decorators (until data-driven framework packs): web routes, task queues, CLIs.
     private static readonly Regex RouteDecorator = new(
@@ -204,7 +205,12 @@ internal sealed class PythonExtractor
             Container = outer?.Node.Id,
             Metrics = { [MetricKeys.Loc] = node.EndPosition.Row - node.StartPosition.Row + 1, [MetricKeys.Methods] = 0 },
         };
-        if (superclasses != null) info.Attributes["bases"] = Collapse(superclasses.Text.Trim('(', ')'));
+        if (superclasses != null)
+        {
+            info.Attributes["bases"] = Collapse(superclasses.Text.Trim('(', ')'));
+            // abc.ABC, metaclass=ABCMeta and typing.Protocol classes are abstract.
+            if (AbstractBase.IsMatch(info.Attributes["bases"])) info.Attributes[AttributeKeys.Abstract] = "true";
+        }
         _project.Output.Nodes.Add(info);
         _stats.Classes++;
 
@@ -259,6 +265,10 @@ internal sealed class PythonExtractor
         var owner = cls?.Node ?? _project.FileNode(_file);
         var decorators = Decorators(node);
         var isStatic = decorators.Contains("staticmethod");
+        if (cls != null && decorators.Any(d => d is "abstractmethod" or "abc.abstractmethod"))
+        {
+            cls.Node.Attributes[AttributeKeys.Abstract] = "true";
+        }
         var member = Member(node, name, owner, decorators, isMethod: cls != null);
         owner.Members.Add(member);
         owner.Metrics[MetricKeys.Methods] = owner.Metrics.GetValueOrDefault(MetricKeys.Methods) + 1;

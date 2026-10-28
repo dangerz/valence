@@ -108,7 +108,13 @@ Type-level units: `class`, `struct`, `interface`, `enum`, `record`, `record-stru
 protons, everything else as neutrons.
 
 `metrics` is a free-form `string → number` map. The viewer uses `loc` for size. The core adds
-`fanIn`, `fanOut`, `commits`, `churn`, `lastChanged` (unix seconds).
+`fanIn`, `fanOut`, `commits`, `churn`, `lastChanged` (unix seconds), and from git authorship over
+the churn window `authors`, `topAuthorShare` and `agentShare` (share of changed lines from commits an
+AI agent or bot authored or co-authored), with the `topAuthor` attribute.
+
+Well-known `attributes`: `abstract` (`"true"` for abstract classes, ABCs and protocols; interfaces
+are already `kind: interface`), `externalImports` (comma-separated modules outside the repo that
+the type's file imports), `externalBase` / `externalInterfaces` (C#).
 
 ### Edge kinds
 

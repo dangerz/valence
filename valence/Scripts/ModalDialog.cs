@@ -75,6 +75,11 @@ public partial class ModalDialog : Control
         return label;
     }
 
+    public void SetTitle(string title)
+    {
+        if (_title != null) _title.Text = title;
+    }
+
     public void Open() => Visible = true;
 
     public void Close() => Visible = false;

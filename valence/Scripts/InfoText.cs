@@ -34,6 +34,39 @@ public static class InfoText
         sb.Append($"[color={color}][b]Risk {risk.Score:0.00}[/b][/color]: {string.Join(", ", parts)}\n");
     }
 
+    /// <summary>Reach, authorship, trust and outside imports (the Reach, Authors and Trust lenses).</summary>
+    private static void AppendInsights(StringBuilder sb, NodeData node, GraphModel model)
+    {
+        if (model.ReachByTrigger.Count > 0)
+        {
+            sb.Append(model.Reached.Contains(node)
+                ? $"Reached from: {string.Join(", ", Insights.TriggersReaching(model, node))}\n"
+                : $"[color={Palette.Html(Palette.Heat(1f))}]Not reached from any entry point[/color]" +
+                  (node.FanIn == 0 ? " and nothing uses it\n" : "\n"));
+        }
+
+        var authors = node.Metric(MetricKeys.Authors);
+        if (authors > 0)
+        {
+            var top = node.Info.Attributes.GetValueOrDefault(AttributeKeys.TopAuthor, "?");
+            var agent = node.Metric(MetricKeys.AgentShare);
+            sb.Append($"{Num(authors)} author{(authors == 1 ? "" : "s")} in {model.Graph.Repo.ChurnWindowDays} days, " +
+                      $"mostly {Esc(top)} ({node.Metric(MetricKeys.TopAuthorShare):P0})");
+            if (agent > 0) sb.Append($" · [color={Palette.Html(Palette.Heat((float)agent))}]{agent:P0} of changed lines by AI agents or bots[/color]");
+            sb.Append('\n');
+        }
+
+        if (node.LinkCount > 0 && node.InferredShare > 0)
+        {
+            var inferred = (int)Math.Round(node.InferredShare * node.LinkCount);
+            sb.Append($"[color={Muted}]{inferred} of {node.LinkCount} links inferred ({node.InferredShare:P0}): trust the map a little less here[/color]\n");
+        }
+        if (node.Info.Attributes.TryGetValue(AttributeKeys.ExternalImports, out var external))
+        {
+            sb.Append($"[color={Muted}]Imports from outside the repo: {Esc(external)}[/color]\n");
+        }
+    }
+
     private static string Top(float share) => $" (top {Math.Max(1, (int)Math.Ceiling(share * 100))}%)";
 
     public static string ForComparison(Comparison comparison, GraphModel model)
@@ -131,6 +164,7 @@ public static class InfoText
             sb.Append('\n');
         }
         AppendRisk(sb, node, model);
+        AppendInsights(sb, node, model);
 
         AppendMembers(sb, node, model);
         AppendEdges(sb, "Depends on", node.Outgoing, e => e.Target, model);

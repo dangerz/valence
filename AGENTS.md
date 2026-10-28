@@ -183,6 +183,8 @@ valence/                 the Godot 4.7 (.NET, C#) viewer
   Scripts/*Panel.cs, ProgressOverlay.cs, PanelResizer.cs, RangeSlider.cs   UI pieces
   Scripts/GraphModel.cs  the loaded graph, indexed for the viewer
   Scripts/RiskScores.cs  the Risk lens: per-class score from churn, fan-in and size percentiles
+  Scripts/Insights.cs    reach (Reach lens), trust (Trust lens) and the Insights menu's reports
+  Scripts/Report.cs, ReportDialog.cs   a report model (BBCode + Markdown) and its window
   Scripts/FlowSimulator.cs, SimulationView.cs   static simulation
   Scripts/FlowChart.cs, FlowChartView.cs, FlowDrawer.cs   the simulation as a flow chart (layout,
                          drawing with live highlight, the drawer and SVG/PNG/Mermaid export)

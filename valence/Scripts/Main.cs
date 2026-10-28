@@ -142,6 +142,10 @@ public partial class Main : Node3D
     private FlowPlan? _chartPlan;
     private FlowGraph? _chartGraph;
     private bool? _chartGrouping;
+
+    // A report's "Show Only These": only its classes are drawn until Filters ▸ Clear Spotlight.
+    private HashSet<NodeData>? _spotlight;
+    private string _spotlightTitle = "";
     private Vector2 _pressPosition;
     private AtomData? _dragAtom;
     private Vector3 _dragOffset;
@@ -236,6 +240,23 @@ public partial class Main : Node3D
         _hud.QuitRequested += () => GetTree().Quit();
         _hud.ToolChanged += tool => _tool = tool;
         _hud.FlowChartToggled += SetFlowChartShown;
+        _hud.InsightRequested += ShowInsight;
+        _hud.Reports.Status += message => _hud.SetStatus(message);
+        _hud.Reports.SpotlightRequested += report =>
+        {
+            _spotlight = report.Spotlight;
+            _spotlightTitle = report.Title;
+            _hud.SetSpotlightActive(true);
+            ApplyVisibility();
+            _hud.SetStatus($"Showing only the {_spotlight?.Count ?? 0:N0} classes in \"{report.Title}\" · Filters ▸ Clear Spotlight shows everything");
+        };
+        _hud.SpotlightCleared += () =>
+        {
+            _spotlight = null;
+            _hud.SetSpotlightActive(false);
+            ApplyVisibility();
+            _hud.SetStatus($"Spotlight on \"{_spotlightTitle}\" cleared");
+        };
         _hud.Flow.CloseRequested += () => SetFlowChartShown(false);
         _hud.Flow.GroupingChanged += group =>
         {
@@ -393,6 +414,8 @@ public partial class Main : Node3D
         _comparisonPath = null;
         _chartPlan = null;
         _chartGraph = null;
+        _spotlight = null;
+        _hud.SetSpotlightActive(false);
         _hud.Flow.ShowChart(null);
         _hud.SetFlowChart(_settings.ShowFlowChart, false);
         _timeline = null;
@@ -890,6 +913,52 @@ public partial class Main : Node3D
         ApplyVisibility(); // brings back anything "untouched" was hiding; also labels + colors
     }
 
+    // ---------------------------------------------------------------- insights
+
+    /// <summary>Insights menu: build the report and show it.</summary>
+    private void ShowInsight(InsightKind kind)
+    {
+        if (_model == null) return;
+        var model = _model;
+        var report = kind switch
+        {
+            InsightKind.BlastFromSelection => Insights.BlastRadius(model, SelectionNodes(), SelectionLabel()),
+            InsightKind.BlastFromComparison => _comparison == null
+                ? Insights.BlastRadius(model, Array.Empty<NodeData>(), "a comparison (none is running: View ▸ Compare With Snapshot)")
+                : Insights.BlastRadius(model, ComparedChanges(), $"the changes since {_comparison.Label}"),
+            InsightKind.BlastFromRecentChanges => model.HasGit
+                ? Insights.BlastRadius(model, Insights.RecentlyChanged(model), "classes changed in the 14 days before this snapshot")
+                : Insights.BlastRadius(model, Array.Empty<NodeData>(), "recent changes (this graph has no git history)"),
+            InsightKind.UnreachedCode => Insights.UnreachedCode(model),
+            InsightKind.Cycles => Insights.Cycles(model),
+            InsightKind.Coverage => Insights.Coverage(model),
+            InsightKind.Abstractions => Insights.Abstractions(model),
+            InsightKind.SystemMetrics => Insights.SystemMetrics(model),
+            _ => Insights.ReadingGuide(model),
+        };
+        _hud.Reports.ShowReport(report);
+    }
+
+    private IReadOnlyCollection<NodeData> SelectionNodes()
+    {
+        if (_selectedNode != null) return new[] { _selectedNode };
+        if (_focusAtom != null) return _focusAtom.Nodes;
+        return Array.Empty<NodeData>();
+    }
+
+    private string SelectionLabel() =>
+        _selectedNode != null ? _selectedNode.Info.Name
+        : _focusAtom != null ? $"the {_focusAtom.Name} system"
+        : "the selection (nothing is selected)";
+
+    private List<NodeData> ComparedChanges() => _comparison == null || _model == null
+        ? new List<NodeData>()
+        : _comparison.Changed.Concat(_comparison.Added)
+            .Select(id => _model.Nodes.GetValueOrDefault(id))
+            .Where(n => n != null)
+            .Cast<NodeData>()
+            .ToList();
+
     // ---------------------------------------------------------------- flow chart
 
     private void ShowFlowChart(FlowGraph graph, FlowPlan plan)
@@ -1248,8 +1317,9 @@ public partial class Main : Node3D
                 var atomPassesUsage = atom.Nodes.Any(PassesUsageFilter);
                 // Only Show Differences: a system with no added or changed classes goes away too.
                 var atomDiffers = atom.Nodes.Any(ShowsAsDifference);
-                // Hide Unrelated: a system with no related classes goes away too.
-                var atomRelated = related == null || atom.Nodes.Any(related.Contains);
+                // Hide Unrelated and a report's spotlight: a system with none of their classes goes away too.
+                var atomRelated = (related == null || atom.Nodes.Any(related.Contains))
+                                  && (_spotlight == null || atom.Nodes.Any(_spotlight.Contains));
                 atom.UserOpacity = OpacityOf(atomState);
                 atom.Opacity = atom.UserOpacity * UntouchedFactor(_revealedAtoms.Contains(atom)) * (atomExists ? 1f : 0f)
                                * UsageFactor(atomPassesUsage) * (atomDiffers ? 1f : 0f) * (atomRelated ? 1f : 0f);
@@ -1260,7 +1330,8 @@ public partial class Main : Node3D
                     node.UserOpacity = OpacityOf(Most(atomState, StateOf("node:" + node.Info.Id)));
                     node.Opacity = node.UserOpacity * UntouchedFactor(_heat.ContainsKey(node)) * (exists ? 1f : 0f)
                                    * UsageFactor(PassesUsageFilter(node)) * (ShowsAsDifference(node) ? 1f : 0f)
-                                   * (related == null || related.Contains(node) ? 1f : 0f);
+                                   * (related == null || related.Contains(node) ? 1f : 0f)
+                                   * (_spotlight == null || _spotlight.Contains(node) ? 1f : 0f);
                 }
             }
         }
@@ -1471,6 +1542,9 @@ public partial class Main : Node3D
         return new Color(rgb.R, rgb.G, rgb.B, color.A * opacity);
     }
 
+    /// <summary>A lens has nothing to say about this class (no git, no links, no entry points).</summary>
+    private static readonly Color NoData = new(0.3f, 0.34f, 0.4f);
+
     private Color NodeColor(NodeData node)
     {
         var model = _model!;
@@ -1482,6 +1556,11 @@ public partial class Main : Node3D
                 : 0f),
             ColorMode.Coupling => Palette.Heat(model.MaxFanIn > 0 ? MathF.Sqrt((float)node.FanIn / model.MaxFanIn) : 0f),
             ColorMode.Risk => Palette.Heat(node.Risk.Score),
+            ColorMode.Reach => model.ReachByTrigger.Count == 0 ? NoData
+                : model.Reached.Contains(node) ? Palette.Heat(0.08f)
+                : Palette.Heat(node.FanIn == 0 ? 1f : 0.72f),
+            ColorMode.Authors => node.Metric(MetricKeys.Churn) > 0 ? Palette.Heat((float)node.Metric(MetricKeys.AgentShare)) : NoData,
+            ColorMode.Trust => node.LinkCount > 0 ? Palette.Heat(node.InferredShare) : NoData,
             _ => node.IsPublic ? Palette.Proton : Palette.Neutron,
         };
         var glow = RecencyGlow(node, model);
@@ -1940,7 +2019,17 @@ public partial class Main : Node3D
         if (_hoverNode != null)
         {
             var info = _hoverNode.Info;
-            var risk = _colorMode == ColorMode.Risk ? $"\nrisk {_hoverNode.Risk.Score:0.00}" : "";
+            var risk = _colorMode switch
+            {
+                ColorMode.Risk => $"\nrisk {_hoverNode.Risk.Score:0.00}",
+                ColorMode.Reach when _model != null && _model.ReachByTrigger.Count > 0 => _model.Reached.Contains(_hoverNode)
+                    ? $"\nreached from {string.Join(", ", Insights.TriggersReaching(_model, _hoverNode))}"
+                    : "\nnot reached from any entry point",
+                ColorMode.Authors when _hoverNode.Metric(MetricKeys.Churn) > 0 =>
+                    $"\n{_hoverNode.Metric(MetricKeys.AgentShare):P0} of recent changes by agents or bots",
+                ColorMode.Trust when _hoverNode.LinkCount > 0 => $"\n{_hoverNode.InferredShare:P0} of its links inferred",
+                _ => "",
+            };
             return $"{info.Name}  ·  {info.Kind}, {info.Visibility}\n" +
                    $"used by {_hoverNode.FanIn} · depends on {_hoverNode.FanOut} · {info.Members.Count} members{risk}";
         }
