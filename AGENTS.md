@@ -82,7 +82,7 @@ build. Nothing needs to be installed into the repos being analyzed.
    `.uid`/`.import` files; the first run builds the C# solution (the NuGet restore needs network).
 2. Press Run (F5 / ⌘B). It opens the bundled demo graph (`valence/samples/demo.valence.json`).
 3. **File ▸ Open Source Folder…** (⌘O) and pick a cloned repo. It's analyzed in the background
-   with a progress dialog; the graph is saved to `~/.valence/graphs/<folder>.valence.json` and
+   with a progress dialog; the graph is saved to `~/.valence/graphs/<folder>-<hash>.valence.json` and
    reopens later via **File ▸ Open Graph…**.
 4. Progress and summary lines are printed with a `[valence]` prefix in Godot's Output panel. That
    log is what the maintainer pastes back when testing a change.
@@ -93,7 +93,7 @@ If Godot reports it can't find .NET, install the .NET 8 SDK and restart Godot.
 
 ```bash
 bash build.sh                                     # → dist/valence.dll (+ standalone dist/probes/csharp/)
-dotnet dist/valence.dll analyze ~/code/SomeRepo   # → ~/.valence/graphs/SomeRepo.valence.json
+dotnet dist/valence.dll analyze ~/code/SomeRepo   # → ~/.valence/graphs/SomeRepo-<hash>.valence.json
 ```
 
 **Platforms:** developed and tested on macOS (Apple Silicon). The native tree-sitter libraries

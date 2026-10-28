@@ -16,6 +16,12 @@ internal sealed record FunctionValue(PyFunction Function, PyClass? Receiver = nu
 /// <summary>An instance of a repo class (self, Foo(), a typed parameter or field).</summary>
 internal sealed record InstanceValue(PyClass Class) : Value;
 
+/// <summary>
+/// <c>super()</c> inside a method of <see cref="Class"/>: its bases, bound to the instance. Members
+/// found through it are the base's own (no dispatch to subclass overrides).
+/// </summary>
+internal sealed record SuperValue(PyClass Class) : Value;
+
 /// <summary>Attribute <see cref="Name"/> of a repo class; <see cref="Type"/> is what it holds, when known.</summary>
 internal sealed record FieldValue(PyClass Owner, Value? Type, string Name) : Value;
 
@@ -340,6 +346,14 @@ internal sealed class PythonResolver
         Resolved result;
         if (reference.Receiver == null)
         {
+            // Python's zero-argument super() in a method (unless the file defines its own "super").
+            if (reference is { Name: "super", Call: true }
+                && scope.Function?.Class is { } owner
+                && !scope.File.Functions.ContainsKey("super")
+                && !scope.File.Imports.ContainsKey("super"))
+            {
+                return new Resolved(new SuperValue(owner), false);
+            }
             result = LookupName(reference.Name, scope, depth + 1);
         }
         else
@@ -475,6 +489,7 @@ internal sealed class PythonResolver
             FieldValue { Type: { } held } => Member(held, name, depth + 1),
             // Past an attribute of unknown type (User.objects.filter) we still only know it's User's.
             FieldValue unknown => new Resolved(unknown, false),
+            SuperValue super => SuperMember(super.Class, name, depth + 1),
             _ => Resolved.None,
         };
     }
@@ -497,6 +512,22 @@ internal sealed class PythonResolver
             }
         }
         return new Resolved(new FieldValue(cls, null, name), false);
+    }
+
+    /// <summary>super().name: the nearest repo base that defines it, skipping the class itself.</summary>
+    private Resolved SuperMember(PyClass cls, string name, int depth)
+    {
+        foreach (var k in Bases(cls, depth + 1).Skip(1))
+        {
+            if (k.Nested.TryGetValue(name, out var nested)) return new Resolved(new ClassValue(nested), false);
+            if (k.Methods.TryGetValue(name, out var method)) return new Resolved(new FunctionValue(method), false);
+            if (k.Fields.TryGetValue(name, out var fields))
+            {
+                var held = FromBindings(fields, depth + 1);
+                return new Resolved(new FieldValue(k, held.Value, name), held.Inferred);
+            }
+        }
+        return Resolved.None;   // defined by a base outside the repo (or nowhere)
     }
 
     /// <summary>The class followed by its repo bases, depth-first (close enough to Python's MRO).</summary>

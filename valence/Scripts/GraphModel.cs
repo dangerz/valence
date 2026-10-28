@@ -238,18 +238,21 @@ public sealed class GraphModel
         return model;
     }
 
-    /// <summary>Classes directly linked to this one (either direction), optionally filtered by edge kind.</summary>
-    public IEnumerable<NodeData> Neighbors(NodeData node, ISet<string>? kinds = null)
+    /// <summary>
+    /// Classes directly linked to this one (either direction), optionally filtered by edge kind.
+    /// Hidden classes are skipped unless <paramref name="includeHidden"/>.
+    /// </summary>
+    public IEnumerable<NodeData> Neighbors(NodeData node, ISet<string>? kinds = null, bool includeHidden = false)
     {
         foreach (var edge in node.Outgoing)
         {
             if (kinds != null && !kinds.Contains(edge.Kind)) continue;
-            if (Nodes.TryGetValue(edge.Target, out var target) && !target.IsHidden) yield return target;
+            if (Nodes.TryGetValue(edge.Target, out var target) && (includeHidden || !target.IsHidden)) yield return target;
         }
         foreach (var edge in node.Incoming)
         {
             if (kinds != null && !kinds.Contains(edge.Kind)) continue;
-            if (Nodes.TryGetValue(edge.Source, out var source) && !source.IsHidden) yield return source;
+            if (Nodes.TryGetValue(edge.Source, out var source) && (includeHidden || !source.IsHidden)) yield return source;
         }
     }
 

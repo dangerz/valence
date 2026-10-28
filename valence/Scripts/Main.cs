@@ -677,9 +677,11 @@ public partial class Main : Node3D
                 var next = new List<NodeData>();
                 foreach (var node in frontier)
                 {
-                    foreach (var neighbor in _model.Neighbors(node, _enabledKinds))
+                    // Walk past classes Hide Unrelated itself hid (so the set can grow again when the
+                    // link depth or selection changes); only skip what the user hid.
+                    foreach (var neighbor in _model.Neighbors(node, _enabledKinds, includeHidden: true))
                     {
-                        if (related.Add(neighbor)) next.Add(neighbor);
+                        if (neighbor.UserOpacity > 0f && related.Add(neighbor)) next.Add(neighbor);
                     }
                 }
                 frontier = next;

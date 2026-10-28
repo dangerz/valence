@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using Valence.Schema;
 
 namespace Valence.Core;
@@ -17,10 +19,20 @@ public static class RepoAnalyzer
 {
     private const double ProbeShare = 0.92;
 
-    /// <summary>~/.valence/graphs/&lt;folder&gt;.valence.json, which is never inside the analyzed repo.</summary>
-    public static string DefaultOutputPath(string root) => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".valence", "graphs",
-        $"{Path.GetFileName(Path.TrimEndingDirectorySeparator(root))}.valence.json");
+    /// <summary>
+    /// ~/.valence/graphs/&lt;folder&gt;-&lt;hash&gt;.valence.json, never inside the analyzed repo. The hash
+    /// of the full path keeps two clones with the same folder name (~/work/app, ~/forks/app) apart.
+    /// </summary>
+    public static string DefaultOutputPath(string root)
+    {
+        var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
+        var hash = Convert.ToHexString(SHA1.HashData(Encoding.UTF8.GetBytes(full)))[..8].ToLowerInvariant();
+        var name = Path.GetFileName(full);
+        foreach (var bad in Path.GetInvalidFileNameChars()) name = name.Replace(bad, '_');
+        return Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".valence", "graphs",
+            $"{name}-{hash}.valence.json");
+    }
 
     /// <summary>Built-in probes first; external probes with the same name as a built-in are skipped.</summary>
     public static List<IProbe> Combine(IEnumerable<IProbe> builtIn, IEnumerable<DiscoveredProbe> external, AnalyzeOptions options)

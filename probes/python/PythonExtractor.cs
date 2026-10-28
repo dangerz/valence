@@ -58,7 +58,7 @@ internal sealed class PythonExtractor
     private static readonly HashSet<string> Builtins = new(StringComparer.Ordinal)
     {
         "print", "len", "range", "str", "int", "float", "bool", "list", "dict", "set", "tuple", "frozenset",
-        "bytes", "bytearray", "object", "type", "super", "isinstance", "issubclass", "getattr", "setattr",
+        "bytes", "bytearray", "object", "type", "isinstance", "issubclass", "getattr", "setattr",
         "hasattr", "delattr", "callable", "iter", "next", "enumerate", "zip", "map", "filter", "sorted",
         "reversed", "min", "max", "sum", "any", "all", "abs", "round", "divmod", "pow", "repr", "format", "id",
         "hash", "vars", "dir", "open", "input", "property", "staticmethod", "classmethod", "slice", "chr",

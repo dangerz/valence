@@ -88,9 +88,11 @@ public static class TimelineBuilder
                     var graph = RepoAnalyzer.Analyze(dir, probes, options, slice);
                     foreach (var node in graph.Nodes) frame.Nodes[node.Id] = node.Metrics.GetValueOrDefault(MetricKeys.Loc);
                 }
-                catch (InvalidOperationException e)
+                catch (Exception e) when (e is not OperationCanceledException)
                 {
-                    // Early commits often have no source files a probe understands yet: an empty frame.
+                    // Early commits often have no source files a probe understands yet, and some can't
+                    // be exported here at all (names the OS rejects, odd symlinks): an empty frame,
+                    // not a failed timeline.
                     context.Log($"timeline: {commit.Hash[..7]}: {e.Message}");
                 }
                 finally

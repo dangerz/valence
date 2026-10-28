@@ -131,14 +131,14 @@ first build. More detail for contributors in [AGENTS.md](AGENTS.md#3-setup-what-
 
 Open `valence/project.godot` in Godot and run it. It starts with a small demo graph. Click
 **Open source folder…** and pick a repo: it's analyzed in the background (read-only) and the
-result opens when done. The graph is also saved to `~/.valence/graphs/<folder>.valence.json`, which
+result opens when done. The graph is also saved to `~/.valence/graphs/<folder>-<hash>.valence.json`, which
 **Open graph…** can reopen instantly later.
 
 ### Command line (optional)
 
 ```bash
 bash build.sh                                   # → dist/valence.dll (+ standalone dist/probes/csharp/)
-dotnet dist/valence.dll analyze ~/code/SomeRepo # → ~/.valence/graphs/SomeRepo.valence.json
+dotnet dist/valence.dll analyze ~/code/SomeRepo # → ~/.valence/graphs/SomeRepo-<hash>.valence.json
 ```
 
 CLI options:

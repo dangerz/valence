@@ -138,6 +138,6 @@ static void PrintUsage() => Console.Error.WriteLine("""
       valence analyze <repo> [--out <file>] [--probes <dir>]... [--churn-days <n>] [--no-git] [--timeout <min>]
       valence probes [--probes <dir>]...
 
-    Default output: ~/.valence/graphs/<repo>.valence.json (the analyzed repo is never written to).
+    Default output: ~/.valence/graphs/<repo>-<hash>.valence.json (the analyzed repo is never written to).
     The graph path is printed to stdout; progress goes to stderr.
     """);
