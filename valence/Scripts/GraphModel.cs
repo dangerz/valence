@@ -32,6 +32,9 @@ public sealed class NodeData
     public float Radius { get; set; }
     public int FanIn { get; set; }
     public int FanOut { get; set; }
+
+    /// <summary>The Risk lens's score and what drives it (<see cref="RiskScores"/>).</summary>
+    public RiskScore Risk { get; set; } = RiskScore.None;
     public List<EdgeInfo> Outgoing { get; } = new();
     public List<EdgeInfo> Incoming { get; } = new();
 
@@ -163,6 +166,9 @@ public sealed class GraphModel
     public double MaxChurn { get; private set; }
     public int MaxFanIn { get; private set; }
 
+    /// <summary>The riskiest classes, highest first (Inspector ▸ Top risks).</summary>
+    public List<NodeData> TopRisks { get; } = new();
+
     public bool HasGit => Graph.Repo.ChurnWindowDays != null;
 
     /// <summary>When the graph was generated (unix seconds); recency is measured against this, not "now".</summary>
@@ -235,6 +241,7 @@ public sealed class GraphModel
         model.ComputeLayers();
         model.MaxChurn = model.Nodes.Values.Select(n => n.Metric(MetricKeys.Churn)).DefaultIfEmpty(0).Max();
         model.MaxFanIn = model.Nodes.Values.Select(n => n.FanIn).DefaultIfEmpty(0).Max();
+        RiskScores.Compute(model);
         return model;
     }
 

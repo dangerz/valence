@@ -10,6 +10,9 @@ public enum ColorMode
     Kind,
     Churn,
     Coupling,
+
+    /// <summary>Churn × dependents × size, as percentiles (<see cref="RiskScores"/>).</summary>
+    Risk,
 }
 
 public static class Palette

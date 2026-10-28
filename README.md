@@ -165,7 +165,10 @@ The viewer also accepts `-- --graph <file>` on the Godot command line.
 ## Viewer controls
 
 The toolbar above the 3D view switches lenses (**Structure**: public vs internal, **Changes**: git
-churn, **Dependencies**: coupling; the same as View ▸ Color By), opens **Filters** and **Fit view**.
+churn, **Dependencies**: coupling, **Risk**: where the next change is most likely to hurt; the same
+as View ▸ Color By), opens **Filters** and **Fit view**. Risk ranks each class by recent churn ×
+how many classes depend on it × size (each as a percentile in the repo; without git, dependents ×
+size). The Inspector lists the **Top risks**, and a selected class shows what drives its score.
 With a class or system selected, **Hide Unrelated** appears there too: everything the selection
 doesn't link to (within View ▸ Link Depth hops) is hidden until you turn it off.
 The buttons in the view's corner pick what a left-drag does: **select** (click selects, drag orbits),

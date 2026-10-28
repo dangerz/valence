@@ -66,6 +66,7 @@ public partial class Hud : Control
         (ColorMode.Visibility, "graph", "Structure", "Public vs internal classes (protons and neutrons)"),
         (ColorMode.Churn, "branch", "Changes", "Classes changed recently glow hot (git churn)"),
         (ColorMode.Coupling, "layers", "Dependencies", "Classes many others depend on glow hot"),
+        (ColorMode.Risk, "bolt", "Risk", "Where the next change is most likely to hurt: recent churn × dependents × size"),
     };
 
     private static readonly (ViewTool Tool, string Icon, string Tooltip)[] Tools =
@@ -113,6 +114,7 @@ public partial class Hud : Control
         (ColorMode.Kind, "Kind (class, interface, struct…)"),
         (ColorMode.Churn, "Churn (recent git changes)"),
         (ColorMode.Coupling, "Coupling (how many depend on it)"),
+        (ColorMode.Risk, "Risk (churn × dependents × size)"),
     };
 
     private readonly List<string> _recentFolders = new();
@@ -147,6 +149,8 @@ public partial class Hud : Control
     private HBoxContainer? _summaryBranchRow;
     private Label? _summaryBranch;
     private readonly Dictionary<string, Label> _cards = new(StringComparer.Ordinal);
+    private VBoxContainer? _topRiskRows;
+    private Label? _topRiskNote;
     private Label? _status;
     private Label? _selectionLabel;
     private PanelContainer? _inspector;
@@ -434,9 +438,107 @@ public partial class Hud : Control
         SetCard("cycles", model.Bonds.Count(b => b.Covalent));
         SetCard("members", model.Nodes.Values.Sum(n => n.Info.Members.Count));
         SetCard("links", model.Graph.MemberEdges.Count);
+        FillTopRisks(model);
 
         _info.Visible = false;
         _summary.Visible = true;
+    }
+
+    /// <summary>Inspector ▸ Top risks: the classes the Risk lens ranks highest, click to select.</summary>
+    private Control BuildTopRisks()
+    {
+        var card = new PanelContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        card.AddThemeStyleboxOverride("panel", UiAssets.Box(Patch.Panel, 12f, 10f));
+        var column = new VBoxContainer();
+        column.AddThemeConstantOverride("separation", 6);
+        card.AddChild(column);
+
+        var header = new HBoxContainer();
+        header.AddThemeConstantOverride("separation", 8);
+        header.AddChild(UiKit.IconRect("bolt", 18f));
+        var title = new Label { Text = "Top risks" };
+        title.AddThemeFontOverride("font", UiKit.BoldFont());
+        title.AddThemeFontSizeOverride("font_size", 15);
+        title.AddThemeColorOverride("font_color", Colors.White);
+        header.AddChild(title);
+        column.AddChild(header);
+
+        _topRiskNote = new Label { AutowrapMode = TextServer.AutowrapMode.WordSmart };
+        _topRiskNote.AddThemeFontSizeOverride("font_size", 12);
+        _topRiskNote.AddThemeColorOverride("font_color", Palette.MutedText);
+        column.AddChild(_topRiskNote);
+
+        _topRiskRows = new VBoxContainer();
+        _topRiskRows.AddThemeConstantOverride("separation", 2);
+        column.AddChild(_topRiskRows);
+        return card;
+    }
+
+    private void FillTopRisks(GraphModel model)
+    {
+        if (_topRiskRows == null || _topRiskNote == null) return;
+        foreach (var child in _topRiskRows.GetChildren())
+        {
+            _topRiskRows.RemoveChild(child);
+            child.QueueFree();
+        }
+        _topRiskNote.Text = model.HasGit
+            ? $"Changed a lot in the last {model.Graph.Repo.ChurnWindowDays} days and depended on by many. The Risk lens colors them all."
+            : "No git history: ranked by how many classes depend on it × size.";
+        if (model.TopRisks.Count == 0)
+        {
+            _topRiskNote.Text += " Nothing to rank yet.";
+            return;
+        }
+
+        for (var i = 0; i < model.TopRisks.Count; i++)
+        {
+            var node = model.TopRisks[i];
+            var score = node.Risk.Score;
+            var row = new HBoxContainer();
+            row.AddThemeConstantOverride("separation", 8);
+
+            var rank = new Label { Text = (i + 1).ToString(), CustomMinimumSize = new Vector2(18f, 0f), VerticalAlignment = VerticalAlignment.Center };
+            rank.AddThemeFontSizeOverride("font_size", 12);
+            rank.AddThemeColorOverride("font_color", Palette.MutedText);
+            row.AddChild(rank);
+
+            var name = new Button
+            {
+                Text = node.Info.Name,
+                Flat = true,
+                ClipText = true,
+                Alignment = HorizontalAlignment.Left,
+                SizeFlagsHorizontal = SizeFlags.ExpandFill,
+                FocusMode = FocusModeEnum.None,
+                TooltipText = $"{node.Info.FullName}\n{node.Atom.Name}\nClick to select",
+            };
+            name.AddThemeFontSizeOverride("font_size", 13);
+            var nodeId = node.Info.Id;
+            name.Pressed += () => LinkClicked?.Invoke("node:" + nodeId);
+            row.AddChild(name);
+
+            var heat = Palette.Heat(score);
+            var bar = new ProgressBar
+            {
+                MinValue = 0,
+                MaxValue = 1,
+                Value = score,
+                ShowPercentage = false,
+                CustomMinimumSize = new Vector2(64f, 8f),
+                SizeFlagsVertical = SizeFlags.ShrinkCenter,
+                MouseFilter = MouseFilterEnum.Ignore,
+            };
+            bar.AddThemeStyleboxOverride("background", ValenceTheme.Box(new Color(1f, 1f, 1f, 0.08f), Colors.Transparent, 0, 3, 0f));
+            bar.AddThemeStyleboxOverride("fill", ValenceTheme.Box(heat, Colors.Transparent, 0, 3, 0f));
+            row.AddChild(bar);
+
+            var value = new Label { Text = score.ToString("0.00"), CustomMinimumSize = new Vector2(34f, 0f), VerticalAlignment = VerticalAlignment.Center };
+            value.AddThemeFontSizeOverride("font_size", 12);
+            value.AddThemeColorOverride("font_color", heat);
+            row.AddChild(value);
+            _topRiskRows.AddChild(row);
+        }
     }
 
     private void SetCard(string key, int value)
@@ -781,6 +883,9 @@ public partial class Hud : Control
                 : "No git history in this graph",
             ColorMode.Coupling =>
                 $"[color={Palette.Html(Palette.Heat(0))}]●[/color] few → [color={Palette.Html(Palette.Heat(1))}]●[/color] many classes depend on it",
+            ColorMode.Risk => hasGit
+                ? $"[color={Palette.Html(Palette.Heat(0))}]●[/color] low → [color={Palette.Html(Palette.Heat(1))}]●[/color] high risk = changed a lot in the last {churnDays} days × many classes depend on it × size"
+                : $"[color={Palette.Html(Palette.Heat(0))}]●[/color] low → [color={Palette.Html(Palette.Heat(1))}]●[/color] high risk = many classes depend on it × size (no git history)",
             _ => "",
         };
         text += "\nSize = lines of code";
@@ -1260,6 +1365,8 @@ public partial class Hud : Control
             if (key == SummaryCards[^1].Key) _summary.AddChild(card);
             else grid.AddChild(card);
         }
+
+        _summary.AddChild(BuildTopRisks());
 
         var hint = new Label
         {

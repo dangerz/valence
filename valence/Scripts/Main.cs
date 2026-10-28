@@ -1481,6 +1481,7 @@ public partial class Main : Node3D
                 ? MathF.Log(1f + (float)node.Metric(MetricKeys.Churn)) / MathF.Log(1f + (float)model.MaxChurn)
                 : 0f),
             ColorMode.Coupling => Palette.Heat(model.MaxFanIn > 0 ? MathF.Sqrt((float)node.FanIn / model.MaxFanIn) : 0f),
+            ColorMode.Risk => Palette.Heat(node.Risk.Score),
             _ => node.IsPublic ? Palette.Proton : Palette.Neutron,
         };
         var glow = RecencyGlow(node, model);
@@ -1939,8 +1940,9 @@ public partial class Main : Node3D
         if (_hoverNode != null)
         {
             var info = _hoverNode.Info;
+            var risk = _colorMode == ColorMode.Risk ? $"\nrisk {_hoverNode.Risk.Score:0.00}" : "";
             return $"{info.Name}  ·  {info.Kind}, {info.Visibility}\n" +
-                   $"used by {_hoverNode.FanIn} · depends on {_hoverNode.FanOut} · {info.Members.Count} members";
+                   $"used by {_hoverNode.FanIn} · depends on {_hoverNode.FanOut} · {info.Members.Count} members{risk}";
         }
         if (_hoverAtom != null)
         {

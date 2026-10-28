@@ -15,6 +15,27 @@ public static class InfoText
     private static readonly string Muted = Palette.Html(Palette.MutedText);
     private static readonly string EntryColor = Palette.Html(Palette.Accent);
 
+    /// <summary>"Risk 0.86: changed 1,240 lines in 90 days (top 4%), used by 37 classes (top 2%), 940 lines (top 10%)".</summary>
+    private static void AppendRisk(StringBuilder sb, NodeData node, GraphModel model)
+    {
+        var risk = node.Risk;
+        var churn = node.Metric(MetricKeys.Churn);
+        var loc = node.Metric(MetricKeys.Loc);
+        var parts = new List<string>();
+        if (model.HasGit)
+        {
+            parts.Add(churn > 0
+                ? $"changed {Num(churn)} lines in {model.Graph.Repo.ChurnWindowDays} days{Top(risk.ChurnTop)}"
+                : $"unchanged in {model.Graph.Repo.ChurnWindowDays} days");
+        }
+        parts.Add(node.FanIn > 0 ? $"used by {node.FanIn} classes{Top(risk.FanInTop)}" : "nothing depends on it");
+        parts.Add($"{Num(loc)} lines{(loc > 0 ? Top(risk.SizeTop) : "")}");
+        var color = Palette.Html(Palette.Heat(risk.Score));
+        sb.Append($"[color={color}][b]Risk {risk.Score:0.00}[/b][/color]: {string.Join(", ", parts)}\n");
+    }
+
+    private static string Top(float share) => $" (top {Math.Max(1, (int)Math.Ceiling(share * 100))}%)";
+
     public static string ForComparison(Comparison comparison, GraphModel model)
     {
         var sb = new StringBuilder();
@@ -109,6 +130,7 @@ public static class InfoText
             if (last > 0) sb.Append($" · last changed {Date(last)}");
             sb.Append('\n');
         }
+        AppendRisk(sb, node, model);
 
         AppendMembers(sb, node, model);
         AppendEdges(sb, "Depends on", node.Outgoing, e => e.Target, model);
