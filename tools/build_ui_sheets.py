@@ -32,7 +32,8 @@ ICON_NAMES = [
     "play", "more", "database", "cube", "link", "cycle", "users", "graph",
     "pointer", "orbit", "move", "zoom-in", "info", "mouse", "close", "copy",
     "eye-quiet", "pause", "stop", "more-vertical", "plus-square", "minus-square", "clock", "dot",
-    "camera", "bolt", "arrow-down", "arrow-up", "trash", "pencil",
+    "camera", "bolt", "arrow-down", "arrow-up", "trash", "pencil", "boundary", "file-read",
+    "file-write", "terminal", "sliders", "chip", "code",
 ]
 
 # Source panels kept, by (row, column) in the source sheet, in output order.
@@ -199,6 +200,12 @@ def poly(points, closed=False):
     return lambda px, py: min(s(px, py) for s in segments)
 
 
+def arc(c, r, a0, a1, steps=16):
+    """An arc of a circle, degrees clockwise from 3 o'clock (y points down)."""
+    angle = lambda i: math.radians(a0 + (a1 - a0) * i / steps)
+    return poly([(c[0] + r * math.cos(angle(i)), c[1] + r * math.sin(angle(i))) for i in range(steps + 1)])
+
+
 def render(prims, fill=FILL, edge=EDGE, outline=OUTLINE):
     out = bytearray(CELL * CELL * 4)
     for y in range(CELL):
@@ -227,6 +234,22 @@ DRAWN = {
     "trash": [seg((30, 38), (98, 38)), poly([(52, 38), (52, 24), (76, 24), (76, 38)]),
               poly([(38, 38), (44, 104), (84, 104), (90, 38)]), seg((56, 54), (56, 88)), seg((72, 54), (72, 88))],
     "pencil": [poly([(28, 100), (32, 80), (82, 30), (98, 46), (48, 96)], closed=True), seg((72, 40), (88, 56))],
+    # The Boundary lens: a dashed edge with an arrow leaving through its gap.
+    "boundary": [arc((54, 74), 36, -15, 75), arc((54, 74), 36, 105, 195), arc((54, 74), 36, 225, 285),
+                 seg((58, 70), (102, 26)), poly([(76, 24), (104, 24), (104, 52)])],
+    "file-read": [poly([(34, 16), (74, 16), (96, 38), (96, 112), (34, 112)], closed=True), poly([(74, 16), (74, 38), (96, 38)]),
+                  seg((50, 62), (80, 62)), seg((50, 78), (80, 78)), seg((50, 94), (68, 94))],
+    # The page's outline stops short of the pencil in its corner.
+    "file-write": [poly([(50, 112), (22, 112), (22, 16), (60, 16), (80, 36), (80, 62)]), poly([(60, 16), (60, 36), (80, 36)]),
+                   poly([(62, 112), (66, 94), (98, 62), (112, 76), (80, 108)], closed=True), seg((88, 72), (102, 86))],
+    "terminal": [rbox((64, 64), (50, 40), 10), poly([(38, 48), (56, 64), (38, 80)]), seg((64, 82), (90, 82))],
+    "sliders": [seg((20, 36), (38, 36)), ring((48, 36), 10), seg((58, 36), (108, 36)),
+                seg((20, 64), (70, 64)), ring((80, 64), 10), seg((90, 64), (108, 64)),
+                seg((20, 92), (30, 92)), ring((40, 92), 10), seg((50, 92), (108, 92))],
+    "chip": [rbox((64, 64), (30, 30), 7), rbox((64, 64), (10, 10), 3),
+             seg((52, 16), (52, 30)), seg((76, 16), (76, 30)), seg((52, 98), (52, 112)), seg((76, 98), (76, 112)),
+             seg((16, 52), (30, 52)), seg((16, 76), (30, 76)), seg((98, 52), (112, 52)), seg((98, 76), (112, 76))],
+    "code": [poly([(44, 36), (16, 64), (44, 92)]), poly([(84, 36), (112, 64), (84, 92)]), seg((72, 28), (56, 100))],
 }
 
 

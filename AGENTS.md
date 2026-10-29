@@ -157,6 +157,7 @@ src/Valence.Core/        analysis engine used by viewer and CLI
   GraphBuilder.cs        merge rules: dedupe nodes, aggregate edges, drop dangling, fan-in/out
   AnalysisContext.cs     logging, progress (Slice for sub-ranges), cancellation, throttling
   RepoFiles.cs           read-only file walking (skips hidden, build, symlinked folders)
+  EffectCatalog.cs       outside effects (network, files, processes…) by API, shared by the probes
   GitHistory.cs          read-only churn/commit metrics; Timeline.cs: git timeline builder
   ProbeRegistry.cs, ProbeRunner.cs, ProcessRunner.cs   external probe discovery and execution
 src/Valence.Syntax/      tree-sitter engine: TreeSitterRuntime loads the native core + grammars
@@ -184,6 +185,8 @@ valence/                 the Godot 4.7 (.NET, C#) viewer
   Scripts/GraphModel.cs  the loaded graph, indexed for the viewer
   Scripts/RiskScores.cs  the Risk lens: per-class score from churn, fan-in and size percentiles
   Scripts/Insights.cs    reach (Reach lens), trust (Trust lens) and the Insights menu's reports
+  Scripts/Boundary.cs, EffectBadges.cs   the Boundary lens: effects spread up the call graph, 3D badges
+  Scripts/BoundaryHistory.cs   outside calls added/removed between timeline frames, and their report
   Scripts/Report.cs, ReportDialog.cs   a report model (BBCode + Markdown) and its window
   Scripts/FlowSimulator.cs, SimulationView.cs   static simulation
   Scripts/FlowChart.cs, FlowChartView.cs, FlowDrawer.cs   the simulation as a flow chart (layout,
@@ -359,6 +362,9 @@ commands; event subscribers. WordPress: `add_action`/`add_filter('hook', callbac
 - [ ] Never writes to the repo; skips vendor/dependency/build folders
 - [ ] Ids prefixed with the language; all linked members exist on nodes
 - [ ] Confidence follows the protocol (explicit names certain; inferred types `likely`)
+- [ ] Outside effects: calls that leave the repo are classified with `EffectCatalog` (add the
+      language's rules there: its standard library's files, network, processes, environment) and
+      recorded on the member making them (`effects`, see the protocol)
 - [ ] Progress via `AnalysisContext.Slice`, cancellation honoured, summary log lines
 - [ ] Docs updated; maintainer has built it and pasted a log
 

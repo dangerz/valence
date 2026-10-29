@@ -14,6 +14,12 @@ public sealed class TimelineFrame
 
     /// <summary>Node id → lines of code at this commit.</summary>
     public Dictionary<string, double> Nodes { get; set; } = new();
+
+    /// <summary>
+    /// Node id → its outside calls at this commit, as "kind api" ("network requests.get"): what its own
+    /// code (members and top level) calls that reaches outside the program. Only nodes that have any.
+    /// </summary>
+    public Dictionary<string, List<string>> Effects { get; set; } = new();
 }
 
 /// <summary>Sampled history of a repo, oldest frame first.</summary>
@@ -24,6 +30,10 @@ public sealed class Timeline
     public string Schema { get; set; } = SchemaId;
     public string Root { get; set; } = "";
     public DateTimeOffset GeneratedAt { get; set; }
+
+    /// <summary>Frames record outside effects (<see cref="TimelineFrame.Effects"/>); false for older timelines.</summary>
+    public bool HasEffects { get; set; }
+
     public List<TimelineFrame> Frames { get; set; } = new();
 }
 
@@ -57,7 +67,7 @@ public static class TimelineBuilder
         context.Log($"timeline: {commits.Count} commits; analyzing {picks.Count} of them");
 
         var prefix = GitHistory.PrefixOf(root);
-        var timeline = new Timeline { Root = root, GeneratedAt = DateTimeOffset.UtcNow };
+        var timeline = new Timeline { Root = root, GeneratedAt = DateTimeOffset.UtcNow, HasEffects = true };
         var options = new AnalyzeOptions { UseGit = false };
         var scratch = Path.Combine(Path.GetTempPath(), "valence-timeline-" + Guid.NewGuid().ToString("N")[..8]);
         try
@@ -86,7 +96,17 @@ public static class TimelineBuilder
                         continue;
                     }
                     var graph = RepoAnalyzer.Analyze(dir, probes, options, slice);
-                    foreach (var node in graph.Nodes) frame.Nodes[node.Id] = node.Metrics.GetValueOrDefault(MetricKeys.Loc);
+                    foreach (var node in graph.Nodes)
+                    {
+                        frame.Nodes[node.Id] = node.Metrics.GetValueOrDefault(MetricKeys.Loc);
+                        var effects = (node.Effects ?? Enumerable.Empty<EffectInfo>())
+                            .Concat(node.Members.SelectMany(m => m.Effects ?? Enumerable.Empty<EffectInfo>()))
+                            .Select(e => $"{e.Kind} {e.Api}")
+                            .Distinct(StringComparer.Ordinal)
+                            .OrderBy(e => e, StringComparer.Ordinal)
+                            .ToList();
+                        if (effects.Count > 0) frame.Effects[node.Id] = effects;
+                    }
                 }
                 catch (Exception e) when (e is not OperationCanceledException)
                 {

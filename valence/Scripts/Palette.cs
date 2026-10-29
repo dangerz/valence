@@ -22,6 +22,9 @@ public enum ColorMode
 
     /// <summary>Hot: most of its links are inferred, not certain.</summary>
     Trust,
+
+    /// <summary>By what it does outside the program: network, files, processes… (<see cref="Boundary"/>).</summary>
+    Boundary,
 }
 
 public static class Palette

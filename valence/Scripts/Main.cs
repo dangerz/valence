@@ -41,6 +41,7 @@ public partial class Main : Node3D
     private DetailLines? _lines;
     private FocusView? _focusView;
     private LabelLayer? _labels;
+    private EffectBadges? _badges;
     private SimulationView? _simulation;
     private FlowGraph? _flowGraph;
     private float _atomLabelRange = 70f;
@@ -181,6 +182,8 @@ public partial class Main : Node3D
         _hud.SetBrightness(_brightness);
         _labelMode = _settings.Labels;
         _hud.SetLabelMode(_labelMode);
+        _boundaryIndirect = _settings.BoundaryIndirect;
+        _hud.SetBoundaryIndirect(_boundaryIndirect);
 
         var startup = StartupGraph();
         GD.Print($"[valence] viewer ready; loading {startup}");
@@ -276,12 +279,19 @@ public partial class Main : Node3D
         };
         _hud.FullscreenToggled += () => ApplyFullscreen(!IsFullscreen(), save: true);
         _hud.ZoomStepRequested += factor => _camera.Zoom(factor);
-        _hud.ColorModeChanged += mode =>
+        _hud.ColorModeChanged += SetColorMode;
+        _hud.LensClicked += OnLensClicked;
+        _hud.BoundaryFilterChanged += SetBoundaryFilter;
+        _hud.BoundaryIndirectChanged += on =>
         {
-            _colorMode = mode;
-            _hud.SetColorMode(mode);
+            _boundaryIndirect = on;
+            _settings.BoundaryIndirect = on;
+            _settings.Save();
+            _hud.SetBoundaryIndirect(on);
             UpdateLegend();
             ApplyColors();
+            if (_boundaryFilter != EffectFlags.None) SetBoundaryFilter(_boundaryFilter);
+            else _hud.SetStatus(on ? "Boundary lens: counting effects reached through calls" : "Boundary lens: only code that makes the call itself");
         };
         _hud.LinkDepthChanged += depth =>
         {
@@ -416,11 +426,14 @@ public partial class Main : Node3D
         _chartGraph = null;
         _spotlight = null;
         _hud.SetSpotlightActive(false);
+        _boundaryFilter = EffectFlags.None;
+        _hud.SetBoundaryFilter(EffectFlags.None);
         _hud.Flow.ShowChart(null);
         _hud.SetFlowChart(_settings.ShowFlowChart, false);
         _timeline = null;
         _timelinePresent = null;
         _timelinePlaying = false;
+        UpdateFrameEffects(0);
         _hud.HideTimeline();
         _hud.SetCompareActive(false);
         _opened = null;
@@ -461,6 +474,11 @@ public partial class Main : Node3D
 
         _labels = new LabelLayer();
         _world.AddChild(_labels);
+
+        _badges = new EffectBadges();
+        _world.AddChild(_badges);
+        _badges.Build(_model);
+        _badges.SetShown(_colorMode == ColorMode.Boundary);
 
         _simulation = new SimulationView();
         _simulation.Init(_assets);
@@ -934,6 +952,8 @@ public partial class Main : Node3D
             InsightKind.Coverage => Insights.Coverage(model),
             InsightKind.Abstractions => Insights.Abstractions(model),
             InsightKind.SystemMetrics => Insights.SystemMetrics(model),
+            InsightKind.Boundary => Insights.BoundaryReport(model),
+            InsightKind.BoundaryHistory => BoundaryHistory.Report(model, TimelineForReport()),
             _ => Insights.ReadingGuide(model),
         };
         _hud.Reports.ShowReport(report);
@@ -1000,6 +1020,7 @@ public partial class Main : Node3D
         if (_model == null) return;
         _hud.ShowRepoSummary(_model);
         _hud.Methods.ShowEntryPoints(_model, CanPlay);
+        ShowBoundaryFrameInfo();
     }
 
     /// <summary>Whether the method list's ▶ has anything to play for this member.</summary>
@@ -1112,6 +1133,194 @@ public partial class Main : Node3D
         _comparison == null || !_onlyDifferences
         || _comparison.Added.Contains(node.Info.Id) || _comparison.Changed.Contains(node.Info.Id);
 
+    // ---------------------------------------------------------------- the Boundary lens
+
+    // Filters ▸ Only Code That Reaches Outside: the kinds shown (None = no filter); and whether effects
+    // reached through calls count (else only code making the call itself).
+    private EffectFlags _boundaryFilter;
+    private bool _boundaryIndirect = true;
+
+    // The lens to go back to when the Boundary tab's third click turns it off.
+    private ColorMode _lensBeforeBoundary = ColorMode.Visibility;
+
+    // The shown timeline frame's outside calls (when the timeline records them): each class's kinds at
+    // that commit, and the classes that started or stopped an outside call since the previous sample.
+    private Dictionary<string, EffectFlags>? _frameEffects;
+    private readonly HashSet<string> _frameGained = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _frameLost = new(StringComparer.Ordinal);
+    private List<BoundaryChange> _frameChanges = new();
+
+    /// <summary>What a class's own code calls outside: at the shown timeline frame, else now.</summary>
+    private EffectFlags DirectEffectsOf(NodeData node) =>
+        _frameEffects != null ? _frameEffects.GetValueOrDefault(node.Info.Id) : node.DirectEffects;
+
+    /// <summary>What the lens and filter go by. Timeline frames only know direct calls (no member links).</summary>
+    private EffectFlags BoundaryEffects(NodeData node) =>
+        _frameEffects != null ? DirectEffectsOf(node)
+        : _boundaryIndirect ? node.Effects
+        : node.DirectEffects;
+
+    /// <summary>On a timeline frame, classes that just stopped an outside call stay visible (in red).</summary>
+    private bool PassesBoundaryFilter(NodeData node) =>
+        _boundaryFilter == EffectFlags.None
+        || (BoundaryEffects(node) & _boundaryFilter) != 0
+        || _frameEffects != null && _frameLost.Contains(node.Info.Id);
+
+    /// <summary>Colored by its most notable effect; dimmer when it only reaches it through calls; dark when it has none.</summary>
+    private Color BoundaryColor(NodeData node)
+    {
+        if (Boundary.Strongest(DirectEffectsOf(node)) is { } direct) return direct.Color;
+        if (_frameEffects != null) return _frameLost.Contains(node.Info.Id) ? Palette.Proton : NoData.Darkened(0.35f);
+        if (_boundaryIndirect && Boundary.Strongest(node.Effects) is { } indirect) return indirect.Color.Lerp(NoData, 0.55f).Darkened(0.2f);
+        return NoData.Darkened(0.35f);
+    }
+
+    private string BoundaryTooltip(NodeData node)
+    {
+        if (_frameEffects != null)
+        {
+            var flags = DirectEffectsOf(node);
+            var text = flags != EffectFlags.None ? $"\n{Boundary.Describe(flags)} at this commit" : "\nno outside calls at this commit";
+            if (_frameGained.Contains(node.Info.Id)) text += "\n↑ started an outside call since the previous sample";
+            if (_frameLost.Contains(node.Info.Id)) text += "\n↓ dropped an outside call since the previous sample";
+            return text;
+        }
+        if (node.Effects == EffectFlags.None) return _model is { Boundary.Any: true } ? "\nstays inside the program" : "";
+        var indirect = node.Effects & ~node.DirectEffects;
+        var direct = node.DirectEffects != EffectFlags.None ? $"\n{Boundary.Describe(node.DirectEffects)}" : "";
+        if (indirect != EffectFlags.None) direct += $"\nthrough calls: {Boundary.Describe(indirect)}";
+        return direct;
+    }
+
+    /// <summary>
+    /// The Boundary tab cycles: first click turns the lens on (colors and badges), the second shows only
+    /// code that reaches outside, the third turns it off and goes back to the lens before.
+    /// </summary>
+    private void OnLensClicked(ColorMode mode)
+    {
+        if (mode != ColorMode.Boundary)
+        {
+            SetColorMode(mode);
+            return;
+        }
+        if (_colorMode != ColorMode.Boundary)
+        {
+            SetColorMode(ColorMode.Boundary);
+            _hud.SetStatus("Boundary lens: click Boundary again to show only code that reaches outside");
+        }
+        else if (_boundaryFilter == EffectFlags.None)
+        {
+            SetBoundaryFilter(Boundary.AllKinds);
+            _hud.SetColorMode(ColorMode.Boundary);    // the toggle button unpressed itself
+        }
+        else
+        {
+            SetColorMode(_lensBeforeBoundary);      // also clears the filter
+            _hud.SetStatus("Boundary lens off");
+        }
+    }
+
+    /// <summary>The timeline frame's outside calls, compared with the previous sample's.</summary>
+    private void UpdateFrameEffects(int index)
+    {
+        _frameGained.Clear();
+        _frameLost.Clear();
+        _frameChanges = new List<BoundaryChange>();
+        if (_timeline is not { HasEffects: true } || _model == null)
+        {
+            _frameEffects = null;
+            UpdateLegend();
+            return;
+        }
+        var frame = _timeline.Frames[index];
+        _frameEffects = BoundaryHistory.Flags(frame);
+        _frameChanges = BoundaryHistory.Changes(index > 0 ? _timeline.Frames[index - 1] : null, frame, _model);
+        foreach (var change in _frameChanges) (change.Added ? _frameGained : _frameLost).Add(change.NodeId);
+        _frameLost.ExceptWith(_frameGained);
+        UpdateLegend();
+    }
+
+    /// <summary>Badges follow the timeline frame while one is shown.</summary>
+    private void RefreshBoundaryBadges() => _badges?.SetFlags(DirectEffectsOf);
+
+    /// <summary>With the Boundary lens on a timeline frame and nothing selected, the inspector lists what changed.</summary>
+    private void ShowBoundaryFrameInfo()
+    {
+        if (_colorMode != ColorMode.Boundary || _frameEffects == null || _timeline == null) return;
+        if (_selectedNode != null || _focusAtom != null || _simulation is { Active: true }) return;
+        var frame = _timeline.Frames[_timelineIndex];
+        _hud.ShowInfo(InfoText.ForBoundaryFrame(frame, _timelineIndex, _timeline.Frames.Count, _frameEffects.Count,
+            _frameChanges, _timelineIndex == 0));
+    }
+
+    /// <summary>"· reaching outside 14 (+2 −1)" for the timeline bar.</summary>
+    private string BoundaryFrameLabel()
+    {
+        if (_timeline == null) return "";
+        if (!_timeline.HasEffects) return _colorMode == ColorMode.Boundary ? " · rebuild the timeline to see outside calls" : "";
+        if (_frameEffects == null) return "";
+        var gained = _frameChanges.Where(c => c.Added).Select(c => c.NodeId).Distinct().Count();
+        var lost = _frameChanges.Where(c => !c.Added).Select(c => c.NodeId).Distinct().Count();
+        return $" · reaching outside {_frameEffects.Count}" + (_timelineIndex > 0 ? $" (+{gained} −{lost})" : "");
+    }
+
+    private Timeline? TimelineForReport()
+    {
+        if (_timeline != null) return _timeline;
+        var root = _model?.Graph.Repo.Root;
+        if (string.IsNullOrEmpty(root)) return null;
+        var path = TimelineBuilder.DefaultPath(root);
+        if (!File.Exists(path)) return null;
+        try
+        {
+            return ValenceJson.Read<Timeline>(path);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidDataException)
+        {
+            _hud.SetStatus($"Could not read the timeline: {e.Message}");
+            return null;
+        }
+    }
+
+    private void SetBoundaryFilter(EffectFlags kinds)
+    {
+        _boundaryFilter = kinds;
+        _hud.SetBoundaryFilter(kinds);
+        if (kinds != EffectFlags.None && _colorMode != ColorMode.Boundary) SetColorMode(ColorMode.Boundary);
+        ApplyVisibility();
+        if (_model == null) return;
+        if (kinds == EffectFlags.None)
+        {
+            _hud.SetStatus("Showing all code again");
+            return;
+        }
+        var shown = _model.Nodes.Values.Count(PassesBoundaryFilter);
+        var what = kinds == Boundary.AllKinds ? "anything outside the program" : Boundary.Describe(kinds).ToLowerInvariant();
+        _hud.SetStatus($"Only code that reaches {what}{(_boundaryIndirect ? " (itself or through calls)" : " itself")}: " +
+                       $"{shown:N0} of {_model.Nodes.Count:N0} classes · Filters ▸ Only Code That Reaches Outside ▸ Off shows everything");
+    }
+
+    private void SetColorMode(ColorMode mode)
+    {
+        if (mode == ColorMode.Boundary && _colorMode != ColorMode.Boundary) _lensBeforeBoundary = _colorMode;
+        _colorMode = mode;
+        _hud.SetColorMode(mode);
+        _badges?.SetShown(mode == ColorMode.Boundary);
+        UpdateLegend();
+        // Leaving the lens also leaves its "only code that reaches outside" filter.
+        if (mode != ColorMode.Boundary && _boundaryFilter != EffectFlags.None)
+        {
+            _boundaryFilter = EffectFlags.None;
+            _hud.SetBoundaryFilter(EffectFlags.None);
+            ApplyVisibility();
+        }
+        ApplyColors();
+        if (_timeline == null) return;
+        ShowTimelineFrame(_timelineIndex, pause: false);
+        // Back from the Boundary frame list to the repo summary.
+        if (mode != ColorMode.Boundary && _selectedNode == null && _focusAtom == null && _simulation is not { Active: true }) ShowSummary();
+    }
+
     // ---------------------------------------------------------------- git timeline
 
     private void BuildTimeline(int samples)
@@ -1215,13 +1424,17 @@ public partial class Main : Node3D
         }
         var removed = previous?.Keys.Count(id => !frame.Nodes.ContainsKey(id)) ?? 0;
         var missing = frame.Nodes.Keys.Count(id => !_model.Nodes.ContainsKey(id));
+        UpdateFrameEffects(index);
+        RefreshBoundaryBadges();
 
         ApplyVisibility();
         var commit = frame.Commit.Length >= 7 ? frame.Commit[..7] : frame.Commit;
         var label = $"{index + 1}/{_timeline.Frames.Count} · {frame.Date.ToLocalTime():yyyy-MM-dd} · {commit} · {frame.Subject} · " +
                     $"{frame.Nodes.Count} classes (+{(previous == null ? frame.Nodes.Count : _timelineNew.Count)} −{removed})" +
-                    (missing > 0 ? $" · {missing} since deleted (not drawn)" : "");
+                    (missing > 0 ? $" · {missing} since deleted (not drawn)" : "") +
+                    (_colorMode == ColorMode.Boundary ? BoundaryFrameLabel() : "");
         _hud.SetTimelineFrame(index, label);
+        ShowBoundaryFrameInfo();
     }
 
     private void ToggleTimelinePlay()
@@ -1240,6 +1453,8 @@ public partial class Main : Node3D
         _timelinePresent = null;
         _timelineNew.Clear();
         _timelinePlaying = false;
+        UpdateFrameEffects(0);
+        RefreshBoundaryBadges();
         _hud.SetTimelinePlaying(false);
         _hud.HideTimeline();
         ApplyVisibility();
@@ -1319,7 +1534,8 @@ public partial class Main : Node3D
                 var atomDiffers = atom.Nodes.Any(ShowsAsDifference);
                 // Hide Unrelated and a report's spotlight: a system with none of their classes goes away too.
                 var atomRelated = (related == null || atom.Nodes.Any(related.Contains))
-                                  && (_spotlight == null || atom.Nodes.Any(_spotlight.Contains));
+                                  && (_spotlight == null || atom.Nodes.Any(_spotlight.Contains))
+                                  && atom.Nodes.Any(PassesBoundaryFilter);
                 atom.UserOpacity = OpacityOf(atomState);
                 atom.Opacity = atom.UserOpacity * UntouchedFactor(_revealedAtoms.Contains(atom)) * (atomExists ? 1f : 0f)
                                * UsageFactor(atomPassesUsage) * (atomDiffers ? 1f : 0f) * (atomRelated ? 1f : 0f);
@@ -1331,7 +1547,8 @@ public partial class Main : Node3D
                     node.Opacity = node.UserOpacity * UntouchedFactor(_heat.ContainsKey(node)) * (exists ? 1f : 0f)
                                    * UsageFactor(PassesUsageFilter(node)) * (ShowsAsDifference(node) ? 1f : 0f)
                                    * (related == null || related.Contains(node) ? 1f : 0f)
-                                   * (_spotlight == null || _spotlight.Contains(node) ? 1f : 0f);
+                                   * (_spotlight == null || _spotlight.Contains(node) ? 1f : 0f)
+                                   * (PassesBoundaryFilter(node) ? 1f : 0f);
                 }
             }
         }
@@ -1342,6 +1559,7 @@ public partial class Main : Node3D
 
         _nucleons?.UpdateAll();
         _bonds?.UpdateAll();
+        _badges?.Refresh();
         _focusView?.RefreshVisibility();
         _simulation?.RefreshTrace();
         _hud.Outline.RefreshStates();
@@ -1502,6 +1720,7 @@ public partial class Main : Node3D
         _focusView?.UpdateLayout(t);
         _labels?.SetOpenFade(Mathf.Clamp((t - 0.5f) * 2f, 0f, 1f));
         _labels?.UpdatePositions();
+        _badges?.UpdatePositions();
         _simulation?.RefreshTrace();
         UpdateLines();
     }
@@ -1525,12 +1744,14 @@ public partial class Main : Node3D
         _labels?.ClearOpened();
         _labels?.SetOpenFade(1f);
         _labels?.UpdatePositions();
+        _badges?.UpdatePositions();
         _simulation?.RefreshTrace();
     }
 
     // ---------------------------------------------------------------- colors & lines
 
-    private void UpdateLegend() => _hud.SetLegend(_colorMode, _model?.HasGit ?? false, _model?.Graph.Repo.ChurnWindowDays);
+    private void UpdateLegend() => _hud.SetLegend(_colorMode, _model?.HasGit ?? false, _model?.Graph.Repo.ChurnWindowDays,
+        _model?.Boundary.Any ?? false, _boundaryIndirect, _frameEffects != null);
 
     private void ApplyColors() => _nucleons?.ApplyColors(node => Faded(NodeColor(node), node.Opacity));
 
@@ -1561,9 +1782,18 @@ public partial class Main : Node3D
                 : Palette.Heat(node.FanIn == 0 ? 1f : 0.72f),
             ColorMode.Authors => node.Metric(MetricKeys.Churn) > 0 ? Palette.Heat((float)node.Metric(MetricKeys.AgentShare)) : NoData,
             ColorMode.Trust => node.LinkCount > 0 ? Palette.Heat(node.InferredShare) : NoData,
+            ColorMode.Boundary => model.Boundary.Any ? BoundaryColor(node) : NoData,
             _ => node.IsPublic ? Palette.Proton : Palette.Neutron,
         };
         var glow = RecencyGlow(node, model);
+
+        // Boundary lens on a timeline frame: what started an outside call since the previous sample
+        // glows; what stopped one glows red (its color); nothing else does.
+        var boundaryFrame = _colorMode == ColorMode.Boundary && _frameEffects != null;
+        if (boundaryFrame)
+        {
+            glow = _frameGained.Contains(node.Info.Id) ? 1f : _frameLost.Contains(node.Info.Id) ? 0.7f : 0f;
+        }
 
         if (_simulation is { Active: true })
         {
@@ -1598,8 +1828,8 @@ public partial class Main : Node3D
             return new Color(color.R, color.G, color.B, 0f);
         }
 
-        // Timeline: classes new in the shown commit glow green.
-        if (_timelinePresent != null && _timelineNew.Contains(node.Info.Id) && node != _anchor)
+        // Timeline: classes new in the shown commit glow green (the Boundary lens has its own glow).
+        if (_timelinePresent != null && !boundaryFrame && _timelineNew.Contains(node.Info.Id) && node != _anchor)
         {
             return new Color(Palette.Added.R, Palette.Added.G, Palette.Added.B, 1f);
         }
@@ -1705,6 +1935,7 @@ public partial class Main : Node3D
         _bonds?.UpdateAtom(atom);
         PlaceMoleculeLabel(atom.Molecule);
         _labels?.UpdatePositions();
+        _badges?.UpdatePositions();
         _simulation?.RefreshTrace();
         if (_opened != null)
         {
@@ -2028,6 +2259,7 @@ public partial class Main : Node3D
                 ColorMode.Authors when _hoverNode.Metric(MetricKeys.Churn) > 0 =>
                     $"\n{_hoverNode.Metric(MetricKeys.AgentShare):P0} of recent changes by agents or bots",
                 ColorMode.Trust when _hoverNode.LinkCount > 0 => $"\n{_hoverNode.InferredShare:P0} of its links inferred",
+                ColorMode.Boundary => BoundaryTooltip(_hoverNode),
                 _ => "",
             };
             return $"{info.Name}  ·  {info.Kind}, {info.Visibility}\n" +

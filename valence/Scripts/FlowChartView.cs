@@ -172,14 +172,28 @@ public partial class FlowChartView : Control
         var hue = box.Owner != null ? Palette.MoleculeHue(box.Owner.Atom.Molecule.Id) : Palette.Accent;
         DrawRect(new Rect2(rect.Position + new Vector2(2f, 7f), new Vector2(3f, rect.Size.Y - 14f)), new Color(hue, reached ? 1f : 0.4f));
 
+        // What it does outside the program (the Boundary lens): an icon per kind, bottom right.
+        var marks = 0;
+        var right = rect.End.X - 6f;
+        foreach (var kind in Boundary.In(box.Effects))
+        {
+            right -= EffectIcon;
+            DrawTextureRect(EffectBadges.WhiteIcon(kind), new Rect2(right, rect.End.Y - EffectIcon - 5f, EffectIcon, EffectIcon), false,
+                new Color(kind.Color, reached ? 1f : 0.45f));
+            right -= 2f;
+            marks++;
+        }
+
         // Text only once it's big enough to read.
         if (_zoom < 0.35f) return;
         var font = GetThemeDefaultFont();
         var textColor = reached ? new Color(0.9f, 0.93f, 0.97f) : new Color(0.9f, 0.93f, 0.97f, 0.45f);
         DrawString(font, rect.Position + new Vector2(12f, 20f), ShortLabel(box, font), HorizontalAlignment.Left, -1, 13, textColor);
-        DrawString(font, rect.Position + new Vector2(12f, 37f), Clip(box.Sublabel, font, 11, rect.Size.X - 20f),
+        DrawString(font, rect.Position + new Vector2(12f, 37f), Clip(box.Sublabel, font, 11, rect.Size.X - 20f - marks * (EffectIcon + 2f)),
             HorizontalAlignment.Left, -1, 11, new Color(Muted, reached ? 1f : 0.5f));
     }
+
+    private const float EffectIcon = 14f;
 
     private static bool InFlight(FlowChart.Arrow arrow, float time, out float progress)
     {
@@ -312,6 +326,7 @@ public partial class FlowChartView : Control
     {
         if (BoxAt(atPosition) is not { } box) return "";
         var reached = box.ReachedAt < float.MaxValue ? $"\nreached at {box.ReachedAt:0.0}s (1×)" : "";
-        return $"{box.Label}\n{box.Sublabel}{reached}\nClick to select the class";
+        var outside = box.Effects != EffectFlags.None ? $"\nreaches outside: {Boundary.Describe(box.Effects)}" : "";
+        return $"{box.Label}\n{box.Sublabel}{reached}{outside}\nClick to select the class";
     }
 }

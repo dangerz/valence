@@ -47,6 +47,9 @@ public sealed class FlowChart
         public float ReachedAt { get; set; } = float.MaxValue;
 
         public bool IsStart { get; set; }
+
+        /// <summary>What its code does outside the program itself (the method's, or the class's when grouped).</summary>
+        public EffectFlags Effects { get; set; }
     }
 
     public sealed class Arrow
@@ -103,7 +106,10 @@ public sealed class FlowChart
             if (boxes.TryGetValue(key, out var box)) return box;
             var system = owner?.Atom.Name ?? "";
             var label = grouped || owner == null ? owner?.Info.Name ?? point : $"{owner.Info.Name}.{MemberName(point, owner)}";
-            box = new Box(key, label, system, owner);
+            box = new Box(key, label, system, owner)
+            {
+                Effects = grouped ? owner?.DirectEffects ?? EffectFlags.None : model.Boundary.MemberDirect(point),
+            };
             boxes[key] = box;
             chart.Boxes.Add(box);
             return box;
@@ -202,6 +208,10 @@ public sealed class FlowChart
         foreach (var box in Boxes.OrderBy(b => b.Column).ThenBy(b => b.Row))
         {
             var label = box.Sublabel.Length > 0 ? $"{MermaidText(box.Label)}<br/><small>{MermaidText(box.Sublabel)}</small>" : MermaidText(box.Label);
+            if (box.Effects != EffectFlags.None)
+            {
+                label += $"<br/><small>↗ {string.Join(", ", Boundary.In(box.Effects).Select(k => k.Tag))}</small>";
+            }
             sb.Append("    ").Append(ids[box]).Append("[\"").Append(label).Append("\"]\n");
         }
         foreach (var arrow in Arrows.OrderBy(a => a.FirstStart))
@@ -260,6 +270,18 @@ public sealed class FlowChart
             sb.Append(Inv($"  <rect x=\"{r.Position.X + 1:0.#}\" y=\"{r.Position.Y + 6:0.#}\" width=\"3\" height=\"{r.Size.Y - 12:0}\" rx=\"1.5\" fill=\"{hue}\"/>\n"));
             sb.Append(Inv($"  <text x=\"{r.Position.X + 12:0.#}\" y=\"{r.Position.Y + 20:0.#}\" fill=\"#e0e8f2\" font-size=\"13\">{Xml(box.Label)}</text>\n"));
             sb.Append(Inv($"  <text x=\"{r.Position.X + 12:0.#}\" y=\"{r.Position.Y + 37:0.#}\" fill=\"#8b95a7\" font-size=\"11\">{Xml(box.Sublabel)}</text>\n"));
+
+            // What it does outside the program: a small tag per kind, from the right edge.
+            var right = r.End.X - 6f;
+            foreach (var kind in Boundary.In(box.Effects).Reverse())
+            {
+                var width = 8f + kind.Tag.Length * 6f;
+                right -= width;
+                var color = Hex(kind.Color);
+                sb.Append(Inv($"  <rect x=\"{right:0.#}\" y=\"{r.Position.Y + r.Size.Y - 18f:0.#}\" width=\"{width:0.#}\" height=\"13\" rx=\"3\" fill=\"{color}\" fill-opacity=\"0.18\" stroke=\"{color}\" stroke-width=\"0.8\"/>\n"));
+                sb.Append(Inv($"  <text x=\"{right + width / 2f:0.#}\" y=\"{r.Position.Y + r.Size.Y - 8.5f:0.#}\" fill=\"{color}\" font-size=\"9\" text-anchor=\"middle\">{kind.Tag}</text>\n"));
+                right -= 3f;
+            }
         }
         sb.Append("</g>\n</svg>\n");
         return sb.ToString();

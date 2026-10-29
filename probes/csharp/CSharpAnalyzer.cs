@@ -89,6 +89,7 @@ internal sealed partial class CSharpAnalyzer
             CollectEdges(Model(compilation, tree), tree);
         }
         _context.Report("Tracing calls and data flow", 1, force: true);
+        _context.Log($"outside effects: {EffectSummary.Describe(_nodes.Values)}");
 
         return new ProbeOutput
         {

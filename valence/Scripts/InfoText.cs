@@ -69,6 +69,99 @@ public static class InfoText
 
     private static string Top(float share) => $" (top {Math.Max(1, (int)Math.Ceiling(share * 100))}%)";
 
+    private const int MaxEffectsPerKind = 8;
+    private const int MaxPathSteps = 4;
+
+    /// <summary>
+    /// The Boundary lens: what the class does outside the program. Calls it makes itself are listed with
+    /// the member and line; effects it only reaches through calls show the path to the code that makes them.
+    /// </summary>
+    private static void AppendBoundary(StringBuilder sb, NodeData node, GraphModel model)
+    {
+        if (node.Effects == EffectFlags.None) return;
+        var boundary = model.Boundary;
+        sb.Append("\n[b]Reaches outside the program[/b]\n");
+
+        var direct = Boundary.DirectEffects(node).ToList();
+        foreach (var kind in Boundary.In(node.DirectEffects))
+        {
+            var calls = direct.Where(d => Boundary.FlagOf(d.Effect.Kind) == kind.Flag).ToList();
+            sb.Append($"[color={Palette.Html(kind.Color)}]●[/color] {kind.Label}\n");
+            foreach (var (member, effect) in calls.Take(MaxEffectsPerKind))
+            {
+                var where = member != null ? $"{Esc(member.Name)}: " : "top level: ";
+                var count = effect.Weight > 1 ? $" ×{effect.Weight}" : "";
+                var likely = effect.Confidence != null ? $", {Esc(effect.Confidence)}" : "";
+                sb.Append($"    [color={Muted}]{where}[/color]{Esc(effect.Api)}{count} [color={Muted}]line {effect.Line}{likely}[/color]\n");
+            }
+            if (calls.Count > MaxEffectsPerKind) sb.Append($"    [color={Muted}]+{calls.Count - MaxEffectsPerKind} more[/color]\n");
+        }
+
+        foreach (var kind in Boundary.In(node.Effects & ~node.DirectEffects))
+        {
+            var start = node.Info.Members.FirstOrDefault(m => (boundary.MemberReaches(m.Id) & kind.Flag) != 0);
+            if (start == null) continue;
+            var (path, effect) = boundary.Trace(start.Id, kind.Flag);
+            var steps = path.Skip(1).Select(id => StepLink(id, model)).ToList();
+            if (steps.Count > MaxPathSteps) steps = steps.Take(2).Append("…").Concat(steps.TakeLast(1)).ToList();
+            var dim = Palette.Html(kind.Color.Lerp(Palette.MutedText, 0.5f));
+            sb.Append($"[color={dim}]○[/color] {kind.Label} [color={Muted}]through calls[/color]\n");
+            sb.Append($"    [color={Muted}]{Esc(start.Name)} →[/color] {string.Join($" [color={Muted}]→[/color] ", steps)}" +
+                      (effect != null ? $" [color={Muted}]→ {Esc(effect.Api)}[/color]" : "") + "\n");
+        }
+    }
+
+    /// <summary>The Boundary lens on a timeline frame: what started and stopped reaching outside since the previous sample.</summary>
+    public static string ForBoundaryFrame(Valence.Core.TimelineFrame frame, int index, int frames, int reaching,
+        List<BoundaryChange> changes, bool first)
+    {
+        var sb = new StringBuilder();
+        sb.Append("[font_size=20][b]Reaching outside[/b][/font_size]\n");
+        sb.Append($"[color={Muted}]{BoundaryHistory.Day(frame)} · {Esc(BoundaryHistory.Short(frame.Commit))} · by {Esc(frame.Author)} · frame {index + 1} of {frames}[/color]\n");
+        sb.Append($"{Esc(frame.Subject)}\n\n");
+        sb.Append($"{reaching} classes make outside calls at this commit.\n");
+        if (first)
+        {
+            sb.Append($"\n[color={Muted}]The first sample: step forward to see what changes.[/color]\n");
+            return sb.ToString();
+        }
+        if (changes.Count == 0)
+        {
+            sb.Append($"\n[color={Muted}]No outside calls added or removed since the previous sample.[/color]\n");
+            return sb.ToString();
+        }
+
+        void AppendGroup(string title, Godot.Color color, IEnumerable<BoundaryChange> group)
+        {
+            var byClass = group.GroupBy(c => c.NodeId).ToList();
+            if (byClass.Count == 0) return;
+            sb.Append($"\n[b][color={Palette.Html(color)}]{title}[/color][/b] ({byClass.Count} class{(byClass.Count == 1 ? "" : "es")})\n");
+            foreach (var cls in byClass.OrderBy(g => g.First().Name, StringComparer.OrdinalIgnoreCase).Take(60))
+            {
+                var head = cls.First();
+                sb.Append(head.Node != null ? NodeLink(head.Node) : Esc(head.Name)).Append('\n');
+                foreach (var change in cls.Take(MaxEffectsPerKind))
+                {
+                    sb.Append($"    [color={Palette.Html(change.Kind.Color)}]●[/color] {Esc(change.Kind.Label)}: {Esc(change.Api)}\n");
+                }
+            }
+        }
+
+        AppendGroup("Started reaching outside", Palette.Added, changes.Where(c => c.Added));
+        AppendGroup("Stopped", Palette.Proton, changes.Where(c => !c.Added));
+        sb.Append($"\n[color={Muted}]Somewhere between the previous sample and this commit. Insights ▸ Outside Effects Over Time lists every sample.[/color]\n");
+        return sb.ToString();
+    }
+
+    /// <summary>"Storage.Save", linking to the class.</summary>
+    private static string StepLink(string memberId, GraphModel model)
+    {
+        var name = model.Boundary.Member(memberId)?.Name ?? memberId;
+        return model.MemberOwners.TryGetValue(memberId, out var owner)
+            ? $"[url=node:{owner.Info.Id}]{Esc(owner.Info.Name)}.{Esc(name)}[/url]"
+            : Esc(name);
+    }
+
     public static string ForComparison(Comparison comparison, GraphModel model)
     {
         var sb = new StringBuilder();
@@ -165,6 +258,7 @@ public static class InfoText
         }
         AppendRisk(sb, node, model);
         AppendInsights(sb, node, model);
+        AppendBoundary(sb, node, model);
 
         AppendMembers(sb, node, model);
         AppendEdges(sb, "Depends on", node.Outgoing, e => e.Target, model);
@@ -194,6 +288,13 @@ public static class InfoText
         var entryCount = atom.Nodes.SelectMany(n => n.Info.Members).Count(m => model.EntryPointsByMember.ContainsKey(m.Id));
         if (entryCount > 0) sb.Append($"\n[color={EntryColor}]▶ {entryCount} entry points in this system[/color]\n");
 
+        var outside = Boundary.Kinds
+            .Select(k => (Kind: k, Count: atom.Nodes.Count(n => (n.DirectEffects & k.Flag) != 0)))
+            .Where(x => x.Count > 0)
+            .Select(x => $"[color={Palette.Html(x.Kind.Color)}]●[/color] {x.Kind.Label.ToLowerInvariant()} {x.Count}")
+            .ToList();
+        if (outside.Count > 0) sb.Append($"\nReaches outside (classes making the call): {string.Join("  ", outside)}\n");
+
         sb.Append("\n[b]Classes[/b]\n");
         foreach (var node in atom.Nodes.OrderBy(n => n.Info.Name, StringComparer.OrdinalIgnoreCase).Take(80))
         {
@@ -218,6 +319,10 @@ public static class InfoText
             if (model.EntryPointsByMember.TryGetValue(member.Id, out var entries))
             {
                 foreach (var entry in entries) sb.Append($" [color={EntryColor}]▶ {Esc(entry.Trigger)}[/color]");
+            }
+            foreach (var kind in Boundary.In(model.Boundary.MemberDirect(member.Id)))
+            {
+                sb.Append($" [color={Palette.Html(kind.Color)}]● {kind.Tag}[/color]");
             }
             sb.Append('\n');
         }

@@ -167,6 +167,7 @@ internal sealed class PythonResolver
         var lookup = use.Kind == UseKind.Call ? use.Ref with { Call = false } : use.Ref;
         var resolved = Eval(lookup, use.Scope, 0);
         var confidence = resolved.Inferred ? Confidence.Likely : null;
+        if (use.Kind is UseKind.Call or UseKind.Mention) RecordEffect(use, lookup, resolved.Value);
 
         // A bond between nucleons, and (inside a function) a link between members for simulation.
         NodeInfo? bondTo = null;
@@ -284,6 +285,151 @@ internal sealed class PythonResolver
 
         static IEnumerable<PyClass> AllNested(PyClass cls) =>
             new[] { cls }.Concat(cls.Nested.Values.SelectMany(AllNested));
+    }
+
+    // ------------------------------------------------------------------ outside effects (the Boundary lens)
+
+    /// <summary>Calls on a Django manager (Model.objects.filter(...)) that query the database.</summary>
+    private static readonly HashSet<string> QuerySetMethods = new(StringComparer.Ordinal)
+    {
+        "all", "filter", "exclude", "get", "create", "get_or_create", "update_or_create", "bulk_create", "bulk_update",
+        "update", "delete", "first", "last", "count", "exists", "aggregate", "annotate", "values", "values_list",
+        "order_by", "raw", "in_bulk", "iterator", "latest", "earliest", "select_related", "prefetch_related", "using",
+    };
+
+    private const int MaxExternalDepth = 12;
+
+    /// <summary>A binding's value as a path outside the repo (null while being worked out, so cycles stop).</summary>
+    private readonly Dictionary<Binding, string?> _externalBindings = new(ReferenceEqualityComparer.Instance);
+
+    /// <summary>
+    /// A call (or, for the environment, a read) that leaves the repo, classified by <see cref="EffectCatalog"/>
+    /// and recorded on the function it's in, else on the class or file whose top-level code it is. Uses that
+    /// resolve to repo code only count when they're Django ORM queries.
+    /// </summary>
+    private void RecordEffect(Use use, Ref lookup, Value? resolved)
+    {
+        string? kind;
+        string? api;
+        string? confidence = null;
+        if (resolved == null)
+        {
+            var inferred = false;
+            api = External(lookup, use.Scope, 0, ref inferred);
+            if (api == null) return;
+            kind = use.Kind == UseKind.Call ? EffectCatalog.Python(api, use.Mode) : EffectCatalog.PythonValue(api);
+            if (inferred) confidence = Confidence.Likely;
+        }
+        else if (use.Kind == UseKind.Call && IsQuerySetCall(lookup))
+        {
+            (kind, api, confidence) = (EffectKinds.Database, lookup.ToString(), Confidence.Likely);
+        }
+        else
+        {
+            return;
+        }
+        if (kind == null || api == null) return;
+
+        if (use.Scope.Function?.Member is { } member) member.Effects = EffectCatalog.Add(member.Effects, kind, api, use.Line, confidence);
+        else if (use.Scope.Owner is { } node) node.Effects = EffectCatalog.Add(node.Effects, kind, api, use.Line, confidence);
+    }
+
+    /// <summary>Article.objects.filter(...), Article.objects.filter(...).first().</summary>
+    private static bool IsQuerySetCall(Ref reference)
+    {
+        if (!QuerySetMethods.Contains(reference.Name)) return false;
+        for (var current = reference.Receiver; current != null; current = current.Receiver)
+        {
+            if (current is { Name: "objects", Call: false, Receiver: not null }) return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// The dotted path a chain ends at outside the repo ("requests.Session().get", "builtins.open"),
+    /// through imports and what locals, fields and globals were assigned or hinted; null when it starts in
+    /// the repo or nowhere known. <paramref name="inferred"/> is set when it went through an assignment.
+    /// </summary>
+    private string? External(Ref reference, Scope scope, int depth, ref bool inferred)
+    {
+        if (depth > MaxExternalDepth) return null;
+        string? path;
+        if (reference.Receiver == null)
+        {
+            path = ExternalName(reference.Name, scope, depth + 1, ref inferred);
+        }
+        else if (reference.Receiver is { Receiver: null, Call: false } self
+                 && scope.Function is { SelfParam: { } selfName, Class: { } cls }
+                 && self.Name == selfName)
+        {
+            path = ExternalField(cls, reference.Name, depth + 1, ref inferred);     // self.session
+        }
+        else
+        {
+            var receiver = External(reference.Receiver, scope, depth + 1, ref inferred);
+            path = receiver == null ? null : receiver + "." + reference.Name;
+        }
+        return path != null && reference.Call ? path + "()" : path;
+    }
+
+    private string? ExternalName(string name, Scope scope, int depth, ref bool inferred)
+    {
+        if (scope.Function is { } fn)
+        {
+            if (name == fn.SelfParam) return null;
+            if (fn.Locals.TryGetValue(name, out var locals)) return ExternalBindings(locals, depth + 1, ref inferred);
+        }
+        else if (scope.Class is { } cls && cls.Fields.TryGetValue(name, out var fields))
+        {
+            return ExternalBindings(fields, depth + 1, ref inferred);
+        }
+
+        var file = scope.File;
+        if (file.Imports.TryGetValue(name, out var import))
+        {
+            if (import.IsRepoPath || ModuleOf(file, import).Module != null) return null;
+            return import.Name != null ? import.Module + "." + import.Name : import.Module;
+        }
+        if (file.Classes.ContainsKey(name) || file.Functions.ContainsKey(name)) return null;
+        if (file.Globals.TryGetValue(name, out var globals)) return ExternalBindings(globals, depth + 1, ref inferred);
+        return PythonExtractor.EffectBuiltins.Contains(name) ? "builtins." + name : null;
+    }
+
+    /// <summary>self.name: what the class (or a repo base) assigned to it.</summary>
+    private string? ExternalField(PyClass cls, string name, int depth, ref bool inferred)
+    {
+        foreach (var k in Bases(cls, 0))
+        {
+            if (k.Fields.TryGetValue(name, out var fields)) return ExternalBindings(fields, depth + 1, ref inferred);
+        }
+        return null;
+    }
+
+    private string? ExternalBindings(List<Binding> bindings, int depth, ref bool inferred)
+    {
+        foreach (var binding in bindings)
+        {
+            if (ExternalBinding(binding, depth) is not { } path) continue;
+            inferred = true;
+            return path;
+        }
+        return null;
+    }
+
+    /// <summary>x = requests.Session() → "requests.Session()"; x: Path → "pathlib.Path()" (an instance).</summary>
+    private string? ExternalBinding(Binding binding, int depth)
+    {
+        if (_externalBindings.TryGetValue(binding, out var known)) return known;
+        _externalBindings[binding] = null;
+        var ignored = false;
+        string? path = null;
+        if (binding.Type != null)
+        {
+            path = External(binding.Type, binding.Scope, depth + 1, ref ignored) is { } type ? type + "()" : null;
+        }
+        if (path == null && binding.Value != null) path = External(binding.Value, binding.Scope, depth + 1, ref ignored);
+        _externalBindings[binding] = path;
+        return path;
     }
 
     // ------------------------------------------------------------------ framework wiring → entry points

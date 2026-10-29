@@ -56,9 +56,11 @@ internal sealed record Wiring(WiringKind Kind, Ref Target, Scope Scope, string L
 /// <summary>
 /// One name use, with where it appears: the scope decides how names resolve and, unless
 /// <paramref name="Source"/> is given (a class's own bases), which nucleon the bond starts from.
-/// <paramref name="Member"/> is the target of an <see cref="UseKind.Enter"/>.
+/// <paramref name="Member"/> is the target of an <see cref="UseKind.Enter"/>. <paramref name="Mode"/> is
+/// the mode string of a call that opens a file (<c>open(path, "w")</c>), for the Boundary lens.
 /// </summary>
-internal sealed record Use(UseKind Kind, Ref Ref, Scope Scope, int Line, NodeInfo? Source = null, MemberInfo? Member = null);
+internal sealed record Use(UseKind Kind, Ref Ref, Scope Scope, int Line, NodeInfo? Source = null, MemberInfo? Member = null,
+    string? Mode = null);
 
 /// <summary>
 /// Where code is: a file's top level, a class body, or a function (nested functions fold into theirs;

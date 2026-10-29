@@ -46,7 +46,8 @@ public static class UiAssets
         "play", "more", "database", "cube", "link", "cycle", "users", "graph",
         "pointer", "orbit", "move", "zoom-in", "info", "mouse", "close", "copy",
         "eye-quiet", "pause", "stop", "more-vertical", "plus-square", "minus-square", "clock", "dot",
-        "camera", "bolt", "arrow-down", "arrow-up", "trash", "pencil",
+        "camera", "bolt", "arrow-down", "arrow-up", "trash", "pencil", "boundary", "file-read",
+        "file-write", "terminal", "sliders", "chip", "code",
     };
 
     /// <summary>Where each panel sits on panels.png (printed by the build script).</summary>

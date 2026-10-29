@@ -69,6 +69,12 @@ internal sealed class PythonExtractor
         "IOError", "NotImplemented", "Ellipsis", "True", "False", "None", "__name__", "__file__", "__doc__",
     };
 
+    /// <summary>Builtins that reach outside the program: kept as uses so pass 2 can record their effects.</summary>
+    internal static readonly HashSet<string> EffectBuiltins = new(StringComparer.Ordinal) { "open", "eval", "exec", "compile", "__import__" };
+
+    /// <summary>An open mode string: "r", "wb", "a+", "rt"…</summary>
+    private static readonly Regex OpenMode = new(@"^[rwxabtU+]{1,4}$", RegexOptions.Compiled);
+
     private readonly PythonProject _project;
     private readonly PyFile _file;
     private readonly ExtractionStats _stats;
@@ -693,8 +699,39 @@ internal sealed class PythonExtractor
         var arguments = node.GetChildForField("arguments");
         if (arguments != null) Walk(arguments, scope, depth + 1);
         if (RefOf(node) is not { } callee) return;
-        if (!IsBuiltin(callee)) AddUse(UseKind.Call, callee, scope, node);
-        if (arguments is { Type: "argument_list" }) RecordWiring(callee, arguments, scope);
+        var argumentList = arguments is { Type: "argument_list" } ? arguments : null;
+        // open(), eval() and friends are builtins, but they reach outside the program (the Boundary lens).
+        if (!IsBuiltin(callee) || callee is { Receiver: null } && EffectBuiltins.Contains(callee.Name))
+        {
+            AddUse(UseKind.Call, callee, scope, node, mode: argumentList != null ? ModeOf(callee, argumentList) : null);
+        }
+        if (argumentList != null) RecordWiring(callee, argumentList, scope);
+    }
+
+    /// <summary>The mode of open(path, "w"), io.open(path, mode="a"), ZipFile(path, "w"), path.open("w").</summary>
+    private static string? ModeOf(Ref callee, Node arguments)
+    {
+        if (callee.Name is not ("open" or "ZipFile" or "File")) return null;
+        var positional = new List<Node>();
+        foreach (var argument in arguments.NamedChildren)
+        {
+            if (argument.Type == "keyword_argument")
+            {
+                if (argument.GetChildForField("name")?.Text == "mode" && argument.GetChildForField("value") is { Type: "string" } value)
+                {
+                    return Mode(value);
+                }
+            }
+            else if (argument.Type != "comment" && positional.Count < 2)
+            {
+                positional.Add(argument);
+            }
+        }
+        // The mode comes after the path, except on a path object: Path(p).open("w").
+        var index = callee.Receiver != null && callee.Name == "open" && positional.Count == 1 ? 0 : 1;
+        return positional.Count > index && positional[index].Type == "string" ? Mode(positional[index]) : null;
+
+        static string? Mode(Node literal) => StringContent(literal) is var text && OpenMode.IsMatch(text) ? text : null;
     }
 
     /// <summary>A name or attribute chain read as a value (not the callee of a call).</summary>
@@ -900,9 +937,10 @@ internal sealed class PythonExtractor
         return owner.Members.Any(m => m.Id == id) ? id + "#" + line : id;
     }
 
-    private void AddUse(UseKind kind, Ref reference, Scope scope, Node at, NodeInfo? source = null, MemberInfo? member = null)
+    private void AddUse(UseKind kind, Ref reference, Scope scope, Node at, NodeInfo? source = null, MemberInfo? member = null,
+        string? mode = null)
     {
-        _file.Uses.Add(new Use(kind, reference, scope, Line(at), source, member));
+        _file.Uses.Add(new Use(kind, reference, scope, Line(at), source, member, mode));
         _stats.Uses++;
     }
 

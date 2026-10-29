@@ -120,6 +120,55 @@ public static class Triggers
     public const string Job = "job";
 }
 
+/// <summary>Ways code reaches outside the program (the Boundary lens), from calls into code outside the repo.</summary>
+public static class EffectKinds
+{
+    /// <summary>HTTP, sockets, websockets, mail, cloud SDKs.</summary>
+    public const string Network = "network";
+
+    /// <summary>Reads files or lists folders.</summary>
+    public const string FileRead = "file-read";
+
+    /// <summary>Creates, writes, moves or deletes files or folders.</summary>
+    public const string FileWrite = "file-write";
+
+    /// <summary>Starts or stops processes, opens things with the OS shell.</summary>
+    public const string Process = "process";
+
+    /// <summary>Environment variables, command-line arguments, the registry.</summary>
+    public const string Environment = "environment";
+
+    /// <summary>SQL and NoSQL clients, ORMs.</summary>
+    public const string Database = "database";
+
+    /// <summary>Native code: P/Invoke, marshalling, ctypes.</summary>
+    public const string Native = "native";
+
+    /// <summary>Code chosen at run time (reflection, eval, call by name): what runs can't be seen statically.</summary>
+    public const string Dynamic = "dynamic";
+
+    public static readonly string[] All = { Network, Database, FileWrite, FileRead, Process, Environment, Native, Dynamic };
+}
+
+/// <summary>One kind of outside effect a member (or a class's top-level code) has, through one API.</summary>
+public sealed class EffectInfo
+{
+    /// <summary>One of <see cref="EffectKinds"/>.</summary>
+    public string Kind { get; set; } = EffectKinds.Network;
+
+    /// <summary>What it calls, e.g. "System.IO.File.WriteAllText" or "requests.get".</summary>
+    public string Api { get; set; } = "";
+
+    /// <summary>Line of the first call.</summary>
+    public int Line { get; set; }
+
+    /// <summary>Number of calls.</summary>
+    public int Weight { get; set; } = 1;
+
+    /// <summary>Null means certain.</summary>
+    public string? Confidence { get; set; }
+}
+
 /// <summary>Well-known metric keys. Probes and the core may add any others.</summary>
 public static class MetricKeys
 {
@@ -273,6 +322,9 @@ public sealed class NodeInfo
 
     /// <summary>Free-form string facts, e.g. "externalBase": "Node3D".</summary>
     public Dictionary<string, string> Attributes { get; set; } = new();
+
+    /// <summary>Outside effects of code that isn't in any member (a script's top level, a class body); null when none.</summary>
+    public List<EffectInfo>? Effects { get; set; }
 }
 
 /// <summary>A method, constructor, property, field, event/signal or free function.</summary>
@@ -292,6 +344,9 @@ public sealed class MemberInfo
 
     /// <summary>Free-form facts, e.g. "signal": "true", "override": "true".</summary>
     public Dictionary<string, string> Attributes { get; set; } = new();
+
+    /// <summary>What it does outside the program itself (network, files, processes…); null when nothing.</summary>
+    public List<EffectInfo>? Effects { get; set; }
 }
 
 /// <summary>A directed dependency: Source depends on Target.</summary>

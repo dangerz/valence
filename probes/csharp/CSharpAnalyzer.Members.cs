@@ -244,7 +244,12 @@ internal sealed partial class CSharpAnalyzer
             case BaseObjectCreationExpressionSyntax creation:
                 if (scope.Model.GetSymbolInfo(creation).Symbol is IMethodSymbol constructor)
                 {
-                    AddMemberEdge(owner, constructor, MemberEdgeKinds.Creates, creation, Confidence.Certain);
+                    if (IsRepoMember(constructor)) AddMemberEdge(owner, constructor, MemberEdgeKinds.Creates, creation, Confidence.Certain);
+                    else RecordCallEffect(owner, constructor, creation, creation.ArgumentList, Confidence.Certain);
+                }
+                else
+                {
+                    RecordUnresolvedCreationEffect(owner, creation);
                 }
                 break;
             case AssignmentExpressionSyntax assignment when assignment.IsKind(SyntaxKind.AddAssignmentExpression):
@@ -292,8 +297,14 @@ internal sealed partial class CSharpAnalyzer
             {
                 AddMemberEdge(owner, method, MemberEdgeKinds.Calls, invocation, confidence);
                 AddImplementationEdges(owner, method, invocation);
+                if (IsNativeImport(method)) RecordEffect(owner, EffectKinds.Native, TypeKey(method.ContainingType) + "." + method.Name, invocation, confidence);
                 return;
             }
+            RecordCallEffect(owner, method, invocation, invocation.ArgumentList, confidence);
+        }
+        else if (symbol == null)
+        {
+            RecordUnresolvedCallEffect(scope, owner, invocation);
         }
 
         // Not a call into repo code. Godot wiring is recognized by name so it works without GodotSharp.

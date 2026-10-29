@@ -244,6 +244,9 @@ public sealed class ViewerSettings
     /// <summary>View ▸ Full Screen: exclusive full screen (the default), else a maximized window.</summary>
     public bool Fullscreen { get; set; } = true;
 
+    /// <summary>Filters ▸ Count Indirect Effects: the Boundary lens also marks code that reaches outside through calls.</summary>
+    public bool BoundaryIndirect { get; set; } = true;
+
     private static string SettingsPath => ProjectSettings.GlobalizePath("user://viewer.json");
 
     public static ViewerSettings Load()

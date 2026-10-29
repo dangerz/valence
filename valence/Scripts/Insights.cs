@@ -18,6 +18,8 @@ public enum InsightKind
     Abstractions,
     SystemMetrics,
     ReadingGuide,
+    Boundary,
+    BoundaryHistory,
 }
 
 /// <summary>
@@ -560,6 +562,120 @@ public static class Insights
         }
         return report;
     }
+
+    // ---------------------------------------------------------------- what reaches outside (the Boundary lens)
+
+    /// <summary>
+    /// Which code reaches outside the program (network, files, processes, environment, databases, native
+    /// and dynamic code), what each entry point ends up touching, and the calls that do it, by kind.
+    /// </summary>
+    public static Report BoundaryReport(GraphModel model)
+    {
+        var boundary = model.Boundary;
+        if (!boundary.Any)
+        {
+            var none = new Report("What reaches outside", "This graph records no outside effects.");
+            none.Section("Why").AddParagraph(
+                "Either the code never calls the network, files, processes, environment or databases, or the graph was made " +
+                "by an older Valence. Re-analyze the source (File ▸ Re-analyze) to find out.");
+            return none;
+        }
+
+        var direct = model.Nodes.Values.Where(n => n.DirectEffects != EffectFlags.None).ToList();
+        var reaching = model.Nodes.Values.Count(n => n.Effects != EffectFlags.None);
+        var entries = model.Graph.EntryPoints
+            .Select(e => (Entry: e, Effects: boundary.MemberReaches(e.Member)))
+            .ToList();
+        var report = new Report("What reaches outside",
+            $"{direct.Count} of {model.Nodes.Count} classes ({Percent(direct.Count, model.Nodes.Count)}) call out of the program themselves; " +
+            $"{reaching} reach outside directly or through calls" +
+            (entries.Count > 0 ? $"; {entries.Count(e => e.Effects != EffectFlags.None)} of {entries.Count} entry points end up there." : "."))
+        {
+            Spotlight = new HashSet<NodeData>(direct),
+        };
+
+        var present = KindsOf(direct);
+        report.Section("Overview").AddTable(
+            new[] { "Effect", "Classes making the call", "Reaching it through calls", "Entry points reaching it" },
+            present.Select(k => new List<ReportCell>
+            {
+                new(k.Label, Color: k.Color),
+                new(boundary.DirectCounts.GetValueOrDefault(k.Flag).ToString()),
+                new(model.Nodes.Values.Count(n => (n.Effects & k.Flag) != 0 && (n.DirectEffects & k.Flag) == 0).ToString()),
+                new(entries.Count(e => (e.Effects & k.Flag) != 0).ToString()),
+            }));
+
+        if (entries.Count > 0)
+        {
+            var header = new List<string> { "Trigger", "Entry point" };
+            header.AddRange(present.Select(k => k.Tag));
+            report.Section($"What each entry point touches ({entries.Count})").AddParagraph(
+                "Following calls, creates and events from each entry point: ● it (or code it runs) makes that kind of call.", muted: true)
+                .AddTable(header, entries
+                    .OrderByDescending(e => present.Count(k => (e.Effects & k.Flag) != 0))
+                    .ThenBy(e => Array.IndexOf(TriggerOrder, e.Entry.Trigger))
+                    .ThenBy(e => e.Entry.Label, StringComparer.OrdinalIgnoreCase)
+                    .Take(MaxRows)
+                    .Select(e =>
+                    {
+                        var row = new List<ReportCell>
+                        {
+                            new(e.Entry.Trigger),
+                            new(e.Entry.Label, model.MemberOwners.GetValueOrDefault(e.Entry.Member)),
+                        };
+                        row.AddRange(present.Select(k => (e.Effects & k.Flag) != 0
+                            ? new ReportCell("●", Color: k.Color)
+                            : new ReportCell("·", Color: Palette.MutedText)));
+                        return row;
+                    }));
+        }
+
+        foreach (var kind in present)
+        {
+            var classes = direct.Where(n => (n.DirectEffects & kind.Flag) != 0).ToList();
+            var section = report.Section($"{kind.Label} ({classes.Count} class{Plural(classes.Count, "es")})");
+            if (kind.Flag == EffectFlags.Dynamic)
+            {
+                section.AddParagraph("Code chosen at run time (reflection, eval, call by name): the map can't see what these run, so links from here may be missing.", muted: true);
+            }
+            section.AddTable(new[] { "Class", "System", "Calls", "In" }, classes
+                .OrderBy(n => n.Atom.Name, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(n => n.Info.Name, StringComparer.OrdinalIgnoreCase)
+                .Take(MaxRows)
+                .Select(n =>
+                {
+                    var calls = Boundary.DirectEffects(n).Where(d => Boundary.FlagOf(d.Effect.Kind) == kind.Flag).ToList();
+                    var apis = calls.Select(d => d.Effect.Api).Distinct(StringComparer.Ordinal).ToList();
+                    var members = calls.Select(d => d.Member != null ? $"{d.Member.Name}:{d.Effect.Line}" : $"top level:{d.Effect.Line}")
+                        .Distinct(StringComparer.Ordinal).ToList();
+                    return new List<ReportCell>
+                    {
+                        new(n.Info.Name, n),
+                        new(n.Atom.Name),
+                        new(Shorten(apis, 3)),
+                        new(Shorten(members, 3), Color: Palette.MutedText),
+                    };
+                }));
+        }
+
+        report.Section("How sure is this?").AddParagraph(
+            "Found from calls into known APIs (the .NET libraries, Godot, Python's standard library and common packages). " +
+            "C# calls are resolved by the compiler; Python calls through imports, and through what a variable was assigned " +
+            "(marked \"likely\" in the inspector). Calls through wrappers outside the repo, or APIs the catalog doesn't know, are missed.",
+            muted: true);
+        return report;
+    }
+
+    /// <summary>The kinds any of these classes have, most notable first.</summary>
+    private static List<EffectKind> KindsOf(IEnumerable<NodeData> nodes)
+    {
+        var all = EffectFlags.None;
+        foreach (var node in nodes) all |= node.DirectEffects;
+        return Boundary.In(all).ToList();
+    }
+
+    private static string Shorten(List<string> items, int max) =>
+        items.Count <= max ? string.Join(", ", items) : string.Join(", ", items.Take(max)) + $" +{items.Count - max}";
 
     // ---------------------------------------------------------------- helpers
 

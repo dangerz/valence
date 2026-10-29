@@ -15,7 +15,7 @@ namespace Valence.Probe.Python;
 /// </summary>
 internal sealed class PythonAnalyzer
 {
-    public const string Version = "0.3.0";
+    public const string Version = "0.4.0";
 
     private const string ParsePhase = "Parsing Python";
     private const string ResolvePhase = "Resolving Python names";
@@ -117,6 +117,7 @@ internal sealed class PythonAnalyzer
         _context.Log($"python: imports {internalImports} inside the repo, {externalImports} outside; " +
                      $"{stats.Uses} name uses → {resolver.Bonded} bonded, {resolver.WithinClass} within their own class, " +
                      $"{resolver.Unresolved} outside the repo or unknown, {resolver.WithoutOwner} in top-level code of class-only files");
+        _context.Log($"python: outside effects: {EffectSummary.Describe(_output.Nodes)}");
         _context.Log($"python: {project.Edges.Count} bonds ({string.Join(", ", byKind)}); " +
                      $"{project.MemberEdges.Count} member links ({string.Join(", ", linksByKind)}); " +
                      $"{_output.EntryPoints.Count} entry points ({string.Join(", ", entriesByTrigger)}); " +

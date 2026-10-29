@@ -73,7 +73,12 @@ this: only classes the flow has reached are labeled.
   working copy is touched), and analyzes it. Then drag the timeline slider, or press ▶, to watch
   the code grow: classes appear as they're added, new ones glow green. Classes that were later
   deleted can't be drawn (they aren't in today's layout) and are counted instead. Saved in
-  `~/.valence/timelines/`; Timeline ▸ Show Timeline reopens it.
+  `~/.valence/timelines/`; Timeline ▸ Show Timeline reopens it. With the **Boundary** lens on, the
+  timeline shows when code started reaching outside the program: each commit's classes are colored
+  and badged by what they call outside at that commit, classes that started an outside call since
+  the previous sample glow, ones that stopped turn red, and the Inspector lists the calls added and
+  removed. **Insights ▸ Outside Effects Over Time** lists every such change by commit (date, author,
+  class, call) and when each kind of reach first appeared. Timelines built before this need rebuilding.
 * **File ▸ Take Snapshot** saves the current graph to `~/.valence/snapshots/`. After the code
   changes, File ▸ Re-analyze and **View ▸ Compare With Snapshot**: added classes turn green, changed
   ones amber, the rest dim, and the inspector lists added, changed and removed classes.
@@ -165,10 +170,22 @@ The viewer also accepts `-- --graph <file>` on the Godot command line.
 ## Viewer controls
 
 The toolbar above the 3D view switches lenses (**Structure**: public vs internal, **Changes**: git
-churn, **Dependencies**: coupling, **Risk**: where the next change is most likely to hurt; the same
-as View ▸ Color By), opens **Filters** and **Fit view**. Risk ranks each class by recent churn ×
+churn, **Dependencies**: coupling, **Risk**: where the next change is most likely to hurt,
+**Boundary**: code that reaches outside the program; the same as View ▸ Color By), opens
+**Filters** and **Fit view**. Risk ranks each class by recent churn ×
 how many classes depend on it × size (each as a percentile in the repo; without git, dependents ×
 size). The Inspector lists the **Top risks**, and a selected class shows what drives its score.
+Boundary colors each class by what it does outside the program: **network**, **database**, **writes
+files**, **processes**, **reads files**, **environment** (variables, arguments, registry), **native
+code** and **dynamic code** (reflection, `eval`: what runs can't be seen statically). Classes that make
+the call themselves are bright and carry a badge per kind; classes that only get there by calling
+them are dimmer (Filters ▸ Count Indirect Effects turns that off). The Inspector lists each call with
+its member and line, and for indirect effects the path to the code that makes it; the flow chart
+marks each step that reaches outside; Filters ▸ Only Code That Reaches Outside hides everything else.
+Clicking the Boundary tab cycles: once turns the lens on, twice shows only code that reaches outside,
+a third time turns it off and returns to the lens you had before.
+Calls are recognized from a catalog of .NET, Godot, Python standard library and common package APIs
+(`src/Valence.Core/EffectCatalog.cs`); calls through wrappers outside the repo are missed.
 View ▸ Color By also has **Reach** (classes no entry point runs), **Authors** (how much of the
 recent change came from AI agents or bots, by commit author or `Co-authored-by`) and **Trust** (how
 much of a class's linking is inferred rather than certain).
@@ -178,7 +195,8 @@ These** (filter the 3D view to the report; Filters ▸ Clear Spotlight undoes it
 **Blast Radius** (what depends on the selection, the compared changes or the last 14 days of
 changes, and which entry points reach them), **Unreached Code**, **Cycles** (with the lighter
 direction to cut), **Coverage Matrix** (systems × triggers), **Abstractions** (single-implementation
-interfaces, wide dispatch), **System Metrics** (instability, abstractness, distance) and a
+interfaces, wide dispatch), **System Metrics** (instability, abstractness, distance), **What
+Reaches Outside** (what each entry point ends up touching, and every outside call by kind) and a
 **Reading Guide** for code you didn't write.
 With a class or system selected, **Hide Unrelated** appears there too: everything the selection
 doesn't link to (within View ▸ Link Depth hops) is hidden until you turn it off.

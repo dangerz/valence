@@ -39,6 +39,10 @@ public sealed class NodeData
     /// <summary>Links in and out (not counting nesting), and the share that's inferred (the Trust lens).</summary>
     public int LinkCount { get; set; }
     public float InferredShare { get; set; }
+
+    /// <summary>The Boundary lens: what its own code does outside the program, and that plus what it reaches through calls.</summary>
+    public EffectFlags DirectEffects { get; set; }
+    public EffectFlags Effects { get; set; }
     public List<EdgeInfo> Outgoing { get; } = new();
     public List<EdgeInfo> Incoming { get; } = new();
 
@@ -177,6 +181,9 @@ public sealed class GraphModel
     public Dictionary<string, HashSet<NodeData>> ReachByTrigger { get; } = new(StringComparer.Ordinal);
     public HashSet<NodeData> Reached { get; } = new();
 
+    /// <summary>What reaches outside the program, directly or through calls (the Boundary lens).</summary>
+    public Boundary Boundary { get; } = new();
+
     public bool HasGit => Graph.Repo.ChurnWindowDays != null;
 
     /// <summary>When the graph was generated (unix seconds); recency is measured against this, not "now".</summary>
@@ -252,6 +259,7 @@ public sealed class GraphModel
         RiskScores.Compute(model);
         Insights.ComputeReach(model);
         Insights.ComputeTrust(model);
+        model.Boundary.Compute(model);
         return model;
     }
 

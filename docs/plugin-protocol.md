@@ -193,6 +193,36 @@ Triggers: `frame`, `physics`, `input`, `draw`, `startup`, `shutdown`, `event`, `
 (others allowed). Engine and framework conventions (Godot callbacks, Laravel routes, Django views…)
 are how a probe finds them.
 
+### Outside effects (optional, additive)
+
+For the Boundary lens, a member may list `effects`: calls into code outside the repo that reach
+outside the program. A node may list them too, for code that isn't in any member (a script's top
+level, a class body). Omit the field when there are none.
+
+```json
+"effects": [
+  { "kind": "file-write", "api": "System.IO.File.WriteAllText", "line": 52, "weight": 2 },
+  { "kind": "network", "api": "requests.Session().get", "line": 18, "confidence": "likely" }
+]
+```
+
+| Kind          | Meaning |
+|---------------|---------|
+| `network`     | HTTP, sockets, websockets, mail, cloud SDKs |
+| `database`    | SQL and NoSQL clients, ORM queries |
+| `file-write`  | creates, writes, moves or deletes files or folders |
+| `file-read`   | reads files or lists folders |
+| `process`     | starts or stops processes, opens things with the OS shell |
+| `environment` | environment variables, command-line arguments, the registry |
+| `native`      | native code: P/Invoke, marshalling, ctypes |
+| `dynamic`     | code chosen at run time (reflection, `eval`, call by name) |
+
+`api` is what was called; `weight` counts calls (default 1); `confidence` follows the edge rules.
+Effects are only the member's own calls: the viewer spreads them back up `calls`, `creates`,
+`raises` and `triggers` links itself. Built-in probes classify calls with
+`src/Valence.Core/EffectCatalog.cs` (.NET by declaring type and member, Python by the dotted path
+a call resolves to through imports); a new language adds its rules there.
+
 ## 5. The merged graph: `valence.graph/1`
 
 The core's output adds `generator`, `repo` (`root`, `name`, `commit`, `branch`, `generatedAt`,

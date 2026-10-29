@@ -46,6 +46,12 @@ public partial class Hud : Control
     private const int ViewOnlyDifferences = 29;
     private const int ViewFullscreen = 30;
     private const int FilterClearSpotlight = 31;
+    private const int FilterBoundaryIndirect = 32;
+
+    // Filters ▸ Only Code That Reaches Outside: Off, Anything Outside, then one per Boundary.Kinds entry.
+    private const int BoundaryFilterOff = 500;
+    private const int BoundaryFilterAny = 501;
+    private const int BoundaryFilterKind = 502;
     private const int InsightBase = 400;
     private const int FileSnapshot = 4;
     private const int FileSnapshots = 5;
@@ -69,6 +75,9 @@ public partial class Hud : Control
         (ColorMode.Churn, "branch", "Changes", "Classes changed recently glow hot (git churn)"),
         (ColorMode.Coupling, "layers", "Dependencies", "Classes many others depend on glow hot"),
         (ColorMode.Risk, "bolt", "Risk", "Where the next change is most likely to hurt: recent churn × dependents × size"),
+        (ColorMode.Boundary, "boundary", "Boundary",
+            "Code that reaches outside the program: network, files, processes, environment, databases.\n" +
+            "Click again to show only that code, a third time to turn it off."),
     };
 
     private static readonly (ViewTool Tool, string Icon, string Tooltip)[] Tools =
@@ -120,6 +129,7 @@ public partial class Hud : Control
         (ColorMode.Reach, "Reach (what no entry point runs)"),
         (ColorMode.Authors, "Authors (changed by AI agents or bots)"),
         (ColorMode.Trust, "Trust (how much linking is inferred)"),
+        (ColorMode.Boundary, "Boundary (network, files, processes…)"),
     };
 
     private readonly List<string> _recentFolders = new();
@@ -145,6 +155,7 @@ public partial class Hud : Control
     private PanelContainer? _filterGutter;
     private PanelContainer? _timelineGutter;
     private PopupMenu? _filtersMenu;
+    private PopupMenu? _boundaryMenu;
     private CheckBox? _hideUnrelated;
     private VBoxContainer? _flowSection;
     private readonly Dictionary<ColorMode, Button> _tabs = new();
@@ -201,6 +212,15 @@ public partial class Hud : Control
 
     /// <summary>Filters ▸ Clear Spotlight (undo a report's "Show Only These").</summary>
     public event Action? SpotlightCleared;
+
+    /// <summary>A toolbar lens tab was clicked (the Boundary tab cycles: lens, only that code, off).</summary>
+    public event Action<ColorMode>? LensClicked;
+
+    /// <summary>Filters ▸ Only Code That Reaches Outside: the kinds to show (None = off).</summary>
+    public event Action<EffectFlags>? BoundaryFilterChanged;
+
+    /// <summary>Filters ▸ Count Indirect Effects toggled.</summary>
+    public event Action<bool>? BoundaryIndirectChanged;
 
     /// <summary>The Insights report window; Main fills it and handles its events.</summary>
     public ReportDialog Reports { get; } = new();
@@ -650,6 +670,17 @@ public partial class Hud : Control
 
     public void SetSpotlightActive(bool active) => SetDisabled(_filtersMenu, FilterClearSpotlight, !active);
 
+    /// <summary>Checks the Boundary filter's current choice.</summary>
+    public void SetBoundaryFilter(EffectFlags kinds)
+    {
+        if (_boundaryMenu == null) return;
+        SetChecked(_boundaryMenu, BoundaryFilterOff, kinds == EffectFlags.None);
+        SetChecked(_boundaryMenu, BoundaryFilterAny, kinds == Boundary.AllKinds);
+        for (var i = 0; i < Boundary.Kinds.Length; i++) SetChecked(_boundaryMenu, BoundaryFilterKind + i, kinds == Boundary.Kinds[i].Flag);
+    }
+
+    public void SetBoundaryIndirect(bool on) => SetChecked(_filtersMenu, FilterBoundaryIndirect, on);
+
     /// <param name="enabled">Simulate ▸ Flow Chart is on (the drawer shows whenever there's a chart).</param>
     /// <param name="visible">The drawer itself is showing.</param>
     public void SetFlowChart(bool enabled, bool visible)
@@ -882,7 +913,11 @@ public partial class Hud : Control
         for (var d = 1; d <= 3; d++) SetChecked(_depthMenu, d, d == depth);
     }
 
-    public void SetLegend(ColorMode mode, bool hasGit, int? churnDays)
+    /// <param name="hasEffects">The graph records outside effects (the Boundary lens has something to show).</param>
+    /// <param name="indirect">The Boundary lens also marks effects reached through calls.</param>
+    /// <param name="timelineEffects">A timeline frame with outside calls is shown: the lens shows that commit.</param>
+    public void SetLegend(ColorMode mode, bool hasGit, int? churnDays, bool hasEffects = false, bool indirect = true,
+        bool timelineEffects = false)
     {
         if (_legendNucleons == null) return;
         var text = mode switch
@@ -911,6 +946,16 @@ public partial class Hud : Control
             ColorMode.Risk => hasGit
                 ? $"[color={Palette.Html(Palette.Heat(0))}]●[/color] low → [color={Palette.Html(Palette.Heat(1))}]●[/color] high risk = changed a lot in the last {churnDays} days × many classes depend on it × size"
                 : $"[color={Palette.Html(Palette.Heat(0))}]●[/color] low → [color={Palette.Html(Palette.Heat(1))}]●[/color] high risk = many classes depend on it × size (no git history)",
+            ColorMode.Boundary when timelineEffects =>
+                string.Join("  ", Boundary.Kinds.Select(k => $"[color={Palette.Html(k.Color)}]●[/color] {k.Label.ToLowerInvariant()}")) +
+                "\nAt this commit: badge = makes the call · ✦ glow = started an outside call since the previous sample · " +
+                $"[color={Palette.Html(Palette.Proton)}]●[/color] red = stopped one",
+            ColorMode.Boundary => hasEffects
+                ? string.Join("  ", Boundary.Kinds.Select(k => $"[color={Palette.Html(k.Color)}]●[/color] {k.Label.ToLowerInvariant()}")) +
+                  (indirect
+                      ? "\nBright + badge = makes the call itself · dim = reaches it through calls · dark = stays inside"
+                      : "\nBadge = makes the call itself · dark = doesn't (Filters ▸ Count Indirect Effects is off)")
+                : "No outside effects in this graph: re-analyze the source with this version (File ▸ Re-analyze)",
             _ => "",
         };
         text += "\nSize = lines of code";
@@ -1119,6 +1164,8 @@ public partial class Hud : Control
         insights.AddItem("Coverage Matrix", InsightBase + (int)InsightKind.Coverage);
         insights.AddItem("Abstractions", InsightBase + (int)InsightKind.Abstractions);
         insights.AddItem("System Metrics", InsightBase + (int)InsightKind.SystemMetrics);
+        insights.AddItem("What Reaches Outside (Boundary)", InsightBase + (int)InsightKind.Boundary);
+        insights.AddItem("Outside Effects Over Time (timeline)", InsightBase + (int)InsightKind.BoundaryHistory);
         insights.AddSeparator();
         insights.AddItem("Reading Guide", InsightBase + (int)InsightKind.ReadingGuide);
         insights.IdPressed += id => InsightRequested?.Invoke((InsightKind)((int)id - InsightBase));
@@ -1188,7 +1235,7 @@ public partial class Hud : Control
         {
             var tab = UiKit.TextButton(icon, text, tooltip);
             tab.ToggleMode = true;
-            tab.Pressed += () => ColorModeChanged?.Invoke(mode);
+            tab.Pressed += () => LensClicked?.Invoke(mode);
             _tabs[mode] = tab;
             row.AddChild(tab);
         }
@@ -1218,7 +1265,7 @@ public partial class Hud : Control
             Text = "Filters  ▾",
             Icon = UiAssets.Icon("filter"),
             Flat = false,
-            TooltipText = "Usage filter, only differences, show everything",
+            TooltipText = "Usage filter, only differences, show everything, code that reaches outside",
             CustomMinimumSize = new Vector2(0f, 34f),
         };
         _filtersMenu = filters.GetPopup();
@@ -1228,6 +1275,33 @@ public partial class Hud : Control
         _filtersMenu.AddItem("Show Everything (clear hide/quiet)", ViewShowAll);
         _filtersMenu.AddItem("Clear Spotlight (a report's Show Only These)", FilterClearSpotlight);
         SetDisabled(_filtersMenu, FilterClearSpotlight, true);
+        _filtersMenu.AddSeparator();
+        _boundaryMenu = new PopupMenu { Name = "BoundaryFilter" };
+        _boundaryMenu.AddRadioCheckItem("Off", BoundaryFilterOff);
+        _boundaryMenu.AddRadioCheckItem("Anything Outside the Program", BoundaryFilterAny);
+        _boundaryMenu.AddSeparator();
+        for (var i = 0; i < Boundary.Kinds.Length; i++)
+        {
+            _boundaryMenu.AddRadioCheckItem(Boundary.Kinds[i].Label, BoundaryFilterKind + i);
+            _boundaryMenu.SetItemIcon(_boundaryMenu.GetItemIndex(BoundaryFilterKind + i), UiAssets.Icon(Boundary.Kinds[i].Icon));
+            _boundaryMenu.SetItemIconMaxWidth(_boundaryMenu.GetItemIndex(BoundaryFilterKind + i), 18);
+            _boundaryMenu.SetItemIconModulate(_boundaryMenu.GetItemIndex(BoundaryFilterKind + i), Boundary.Kinds[i].Color);
+        }
+        _boundaryMenu.IdPressed += id =>
+        {
+            var choice = (int)id;
+            BoundaryFilterChanged?.Invoke(choice switch
+            {
+                BoundaryFilterAny => Boundary.AllKinds,
+                >= BoundaryFilterKind when choice - BoundaryFilterKind < Boundary.Kinds.Length => Boundary.Kinds[choice - BoundaryFilterKind].Flag,
+                _ => EffectFlags.None,
+            });
+        };
+        _filtersMenu.AddSubmenuNodeItem("Only Code That Reaches Outside", _boundaryMenu);
+        _filtersMenu.AddCheckItem("Count Indirect Effects (through calls)", FilterBoundaryIndirect);
+        _filtersMenu.SetItemTooltip(_filtersMenu.GetItemIndex(FilterBoundaryIndirect),
+            "Boundary lens: also mark code that reaches the network, files… by calling code that does");
+        SetBoundaryFilter(EffectFlags.None);
         _filtersMenu.IdPressed += id => OnMenu((int)id);
         SetDisabled(_filtersMenu, ViewOnlyDifferences, true);
         row.AddChild(filters);
@@ -1686,6 +1760,9 @@ public partial class Hud : Control
                 break;
             case FilterClearSpotlight:
                 SpotlightCleared?.Invoke();
+                break;
+            case FilterBoundaryIndirect:
+                BoundaryIndirectChanged?.Invoke(!IsChecked(_filtersMenu, FilterBoundaryIndirect));
                 break;
             case SimFlowChart:
                 FlowChartToggled?.Invoke(!IsChecked(_simulateMenu, SimFlowChart));
