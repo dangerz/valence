@@ -266,9 +266,11 @@ Reports built from the graph, in a window with clickable classes, **Show Only Th
 
 | Item | What it does |
 | --- | --- |
-| User Guide (F1) | This guide, with a contents list. Section links jump; web links open in your browser. |
+| User Guide (F1) | This guide, with a contents list and a search box. Section links jump; web links open in your browser. |
 | Controls | The key and mouse reference, in groups (Camera, Exploring, Simulate). |
 | About Valence | What Valence is, the read-only promise, credits and license. |
+
+**Searching this guide:** type in the box above the contents (it has focus when the guide opens; ⌘F brings it back). From two letters on, the list on the left becomes the matches, each with its section and a snippet, and every match is highlighted in the text. Click a match, or press Enter for the next one and Shift+Enter for the previous. Esc clears the search; Esc again closes the guide.
 
 ### Smaller menus
 
@@ -628,6 +630,7 @@ With the **Boundary** lens on, the timeline shows when code started reaching out
 | Hover a class or system | Tooltip; direct links light up |
 | F | Frame everything |
 | F1 | Open this guide |
+| ⌘F / Enter / Shift+Enter / Esc (in the guide) | Search the guide / next match / previous match / clear the search (Esc again closes) |
 | Esc | Stop a simulation; otherwise back out one level |
 | ⌘F | Find (focus the Outline filter) |
 | ⌘O / ⌘⇧O / ⌘R | Open source folder / open graph / re-analyze |

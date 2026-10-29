@@ -56,7 +56,7 @@ Each row names the user-facing feature, the code that implements it, and the dat
 | Status bar | `Hud.SetStatus`, `Hud.SetSelection` | |
 | Panel resizing / visibility | `PanelResizer`, `Hud.ResizePanel`, `Hud.TogglePanel`, `Hud.UpdateRightColumn`; `Hud.PanelWidthsChanged` / `PanelsChanged` → `ViewerSettings` | `OutlineWidth`, `RightWidth`, `Show*` |
 | Dialogs (Controls, About, Insights, Snapshots) | `ModalDialog` (OK / Esc / Enter / click outside closes; swallows keys while open), `Hud.BuildDialogs`, `Hud.AddHelpGroup` | |
-| User Guide (Help ▸ User Guide, F1) | `HelpDialog` (`BuildGuide`, `ShowGuide`, contents `ItemList`, `#anchor` / web link handling); `Markdown.Render` turns the guide's Markdown subset into BBCode and records each heading's paragraph for `ScrollToParagraph`; `Hud.Guide`, `Main.HandleKey` (F1) | `res://help/HELP.md` (shipped via the export presets' `include_filter`) |
+| User Guide (Help ▸ User Guide, F1) | `HelpDialog` (`BuildGuide`, `ShowGuide`, contents `ItemList`, `#anchor` / web link handling, search: `Search`, `Step`, `GoToMatch`, Esc/⌘F in `_Input`); `Markdown.Render(markdown, highlight)` turns the guide's Markdown subset into BBCode, records each heading's paragraph for `ScrollToParagraph` and each line's plain text as a `MarkdownBlock` for search, and highlights the search term outside BBCode tags; `Hud.Guide`, `Main.HandleKey` (F1) | `res://help/HELP.md` (shipped via the export presets' `include_filter`) |
 
 ### Lenses
 
