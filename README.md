@@ -96,8 +96,10 @@ this: only classes the flow has reached are labeled.
   event wiring show as smaller "likely" pulses.
 
 The demo graph includes four sample web requests, so **Play Trigger ▸ request** works right away.
+The full **User Guide** (every menu, lens, filter, report and control, with workflows) is
+[valence/help/HELP.md](valence/help/HELP.md); in the app it's **Help ▸ User Guide** (F1).
 Roadmap: [docs/ROADMAP.md](docs/ROADMAP.md). Contributing with an AI agent (e.g. adding a language):
-[AGENTS.md](AGENTS.md).
+[AGENTS.md](AGENTS.md), then the deeper [docs/AGENT_REFERENCE.md](docs/AGENT_REFERENCE.md).
 
 ## Layout
 
@@ -112,6 +114,8 @@ tools/make_icon.py    rebuilds the app icon from the logo
 tools/build_ui_sheets.py  rebuilds the UI icon and panel sheets from images/ui-source/
 valence/              Godot 4.7 (.NET) viewer
 docs/plugin-protocol.md   how to write a probe for another language
+docs/AGENT_REFERENCE.md   deep technical reference for agents: features → code, data flow, recipes
+valence/help/HELP.md      the user guide (also in the app: Help ▸ User Guide)
 AGENTS.md             guide for AI agents contributing (rules, structure, adding a language)
 ```
 
@@ -134,10 +138,10 @@ Requirements: **Godot 4.7.2, .NET edition** (not the standard build; the project
 are needed for the languages being analyzed; Roslyn and tree-sitter come in as NuGet packages on the
 first build. More detail for contributors in [AGENTS.md](AGENTS.md#3-setup-what-to-install-and-how-to-run-it).
 
-Open `valence/project.godot` in Godot and run it. It starts with a small demo graph. Click
-**Open source folder…** and pick a repo: it's analyzed in the background (read-only) and the
+Open `valence/project.godot` in Godot and run it. It starts with a small demo graph. Choose
+**File ▸ Open Source Folder…** and pick a repo: it's analyzed in the background (read-only) and the
 result opens when done. The graph is also saved to `~/.valence/graphs/<folder>-<hash>.valence.json`, which
-**Open graph…** can reopen instantly later.
+**File ▸ Open Graph…** can reopen instantly later.
 
 ### Command line (optional)
 
@@ -206,16 +210,17 @@ The buttons in the view's corner pick what a left-drag does: **select** (click s
 | Input | Action |
 |-------|--------|
 | Drag / two-finger swipe | orbit |
-| Right-drag / Shift+swipe | pan |
+| Right-drag / middle-drag / Shift+swipe | pan |
 | Wheel / pinch | zoom |
 | Click atom | open the system (labeled classes, rim ports, inspector) |
 | Hover a class | tooltip + its direct links |
 | Click a class | select it; links light up to View ▸ Link Depth hops |
 | Click a port | jump to that system |
-| Shift-drag atom | move it (saved per repo) |
+| Shift-drag atom (select tool) | move it (saved per repo) |
 | Double-click empty space, **F** | frame everything |
 | **F11** / **⌃⌘F** | full screen on/off (View ▸ Full Screen; remembered) |
-| **Esc** | back out one level |
+| **Esc** | stop a simulation; otherwise back out one level |
+| **F1** | the User Guide |
 | **⌘F** / Outline filter | find a class or system by name |
 | **⌘O** / **⌘⇧O** / **⌘R** | open source folder / open graph / re-analyze |
 

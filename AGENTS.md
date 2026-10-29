@@ -7,6 +7,13 @@ language (PHP is next; the playbook uses it as the worked example).
 
 If anything here disagrees with what your maintainer tells you in chat, the maintainer wins.
 
+Two companions: **[docs/AGENT_REFERENCE.md](docs/AGENT_REFERENCE.md)** goes deeper (which code
+implements each feature, the data flow from probe to pixel, the data model, viewer and probe
+internals, step-by-step recipes for adding a lens, filter, report, menu item, effect rule, icon or
+schema field, and the invariants to keep). **[valence/help/HELP.md](valence/help/HELP.md)** is the
+user guide; it ships inside the app (Help ▸ User Guide, F1), so keep it true when you change
+anything a user can see.
+
 ---
 
 ## 1. What Valence is
@@ -145,6 +152,7 @@ build.sh                 optional: publishes the CLI and the standalone C# probe
 Valence.Tools.sln        solution for the non-Godot projects (CLI, core, probes)
 docs/plugin-protocol.md  THE contract: probe manifest, probe output, graph format, edge kinds
 docs/ROADMAP.md          what's done, what's next, language order
+docs/AGENT_REFERENCE.md  the deep technical reference: features → code, data flow, recipes
 images/logo.png          the original logo
 tools/make_icon.py       rebuilds valence/images/icon.png from the logo (pure Python, --mark-only)
 tools/build_ui_sheets.py rebuilds valence/images/ui/{icons,panels}.png from images/ui-source/
@@ -196,6 +204,9 @@ valence/                 the Godot 4.7 (.NET, C#) viewer
   Scripts/Palette.cs     every color; Storage.cs: user:// persistence; Comparison.cs: compare +
                          SnapshotStore (save, list, rename via names.json, delete to trash)
   Scripts/AnalyzerLauncher.cs  runs the analysis in-process; registers the built-in probes
+  Scripts/HelpDialog.cs, Markdown.cs   Help ▸ User Guide: renders help/HELP.md (a Markdown subset)
+  help/HELP.md           the user guide, shipped in the app (export include_filter)
+  export_presets.cfg     macOS / Windows / Linux exports into ../dist/release/
   Shaders/               atom cloud, bond flow, nucleon shaders
   images/logo.png (boot splash), images/icon.png (app icon), images/ui/ (icon + panel sheets)
   samples/demo.valence.json  the startup demo graph
@@ -254,8 +265,10 @@ in `user://`.
 - **Match the surrounding code:** file-scoped namespaces, `<summary>` doc comments on types and
   non-obvious members, comments that say *why*, nullable enabled, small private helpers, `const`
   for tunables. Godot nodes are `partial` classes. Keep Godot APIs out of `src/` and `probes/`.
-- **Keep the docs true.** When behaviour changes, update `README.md`, `docs/ROADMAP.md` and, for
-  format or rule changes, `docs/plugin-protocol.md` in the same change.
+- **Keep the docs true.** When behaviour changes, update `README.md`, `docs/ROADMAP.md`, the user
+  guide `valence/help/HELP.md` (anything a user can see: menus, keys, lenses, reports),
+  `docs/AGENT_REFERENCE.md` (where things live, recipes) and, for format or rule changes,
+  `docs/plugin-protocol.md` in the same change.
 
 ---
 

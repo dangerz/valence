@@ -107,6 +107,7 @@ public partial class Hud : Control
     private const int NavigateClear = 42;
     private const int HelpControls = 60;
     private const int HelpAbout = 61;
+    private const int HelpGuide = 62;
     private const int SimDownstream = 80;
     private const int SimUpstream = 81;
     private const int SimGameLoop = 82;
@@ -221,6 +222,9 @@ public partial class Hud : Control
 
     /// <summary>Filters ▸ Count Indirect Effects toggled.</summary>
     public event Action<bool>? BoundaryIndirectChanged;
+
+    /// <summary>Help ▸ User Guide (F1): the bundled help/HELP.md, rendered in-app.</summary>
+    public HelpDialog Guide { get; } = new();
 
     /// <summary>The Insights report window; Main fills it and handles its events.</summary>
     public ReportDialog Reports { get; } = new();
@@ -665,7 +669,7 @@ public partial class Hud : Control
         _compareMenu.AddItem("Manage Snapshots…", CompareManage);
     }
 
-    /// <summary>Stop Comparing and Only Show Differences only make sense while comparing.</summary>
+    /// <summary>Checks View ▸ Full Screen.</summary>
     public void SetFullscreen(bool on) => SetChecked(_viewMenu, ViewFullscreen, on);
 
     public void SetSpotlightActive(bool active) => SetDisabled(_filtersMenu, FilterClearSpotlight, !active);
@@ -711,6 +715,7 @@ public partial class Hud : Control
         if (_hideUnrelated != null) _hideUnrelated.Visible = selected;
     }
 
+    /// <summary>Stop Comparing and Only Show Differences only make sense while comparing.</summary>
     public void SetCompareActive(bool active)
     {
         SetDisabled(_viewMenu, ViewStopCompare, !active);
@@ -1182,6 +1187,8 @@ public partial class Hud : Control
         menus.AddChild(timeline);
 
         var help = new PopupMenu { Name = "Help" };
+        help.AddItem("User Guide", HelpGuide);
+        SetShortcut(help, HelpGuide, Key.F1, command: false);
         help.AddItem("Controls", HelpControls);
         help.AddItem("About Valence", HelpAbout);
         help.IdPressed += id => OnMenu((int)id);
@@ -1213,7 +1220,7 @@ public partial class Hud : Control
         return bar;
     }
 
-    /// <summary>Lenses (Structure / Changes / Dependencies), Filters and Fit view, above the 3D view.</summary>
+    /// <summary>Lenses (Structure / Changes / Dependencies / Risk / Boundary), Hide Unrelated, Filters and Fit view, above the 3D view.</summary>
     private Control BuildToolbar()
     {
         var bar = new PanelContainer();
@@ -1636,15 +1643,15 @@ public partial class Hud : Control
         _helpDialog.Build("Controls", 680f);
         AddHelpGroup(_helpDialog, "Camera",
             ("Drag", "orbit"),
-            ("Right-drag · Shift+two-finger swipe", "pan"),
+            ("Right-drag · middle-drag · Shift+two-finger swipe", "pan"),
             ("Scroll · pinch", "zoom"),
-            ("F", "frame everything"),
-            ("Esc", "back out one level"));
+            ("F · double-click empty space", "frame everything"),
+            ("Esc", "back out one level (stops a simulation first)"));
         AddHelpGroup(_helpDialog, "Exploring",
             ("Click a system", "open it: classes spread out, ports lead to other systems"),
             ("Click a class · ⌘F", "select it and label everything connected (View ▸ Link Depth for more hops)"),
             ("Click a port", "jump to that system"),
-            ("Shift-drag a system", "move it (saved per repo; View ▸ Reset Layout undoes)"),
+            ("Shift-drag a system", "move it with the select tool (saved per repo; View ▸ Reset Layout undoes)"),
             ("L", "labels: all / near mouse / on click"),
             ("⌘O · ⌘R", "open a source folder · re-analyze"));
         AddHelpGroup(_helpDialog, "Simulate (static: nothing is run)",
@@ -1654,9 +1661,12 @@ public partial class Hud : Control
             ("Space", "pause, resume or replay"),
             ("H", "untouched classes: show / ghost / hide"),
             ("Esc", "stop"));
-        _helpDialog.AddText("Drag a side panel's border to resize it.", fontSize: 12)
+        _helpDialog.AddText("Drag a side panel's border to resize it. Everything else: Help ▸ User Guide (F1).", fontSize: 12)
             .AddThemeColorOverride("font_color", Palette.MutedText);
         AddChild(_helpDialog);
+
+        Guide.BuildGuide();
+        AddChild(Guide);
 
         // About: the logo above the description, at a fixed size.
         _aboutDialog = new ModalDialog();
@@ -1847,6 +1857,9 @@ public partial class Hud : Control
                 IncludeDataChanged?.Invoke(on);
                 break;
             }
+            case HelpGuide:
+                Guide.ShowGuide();
+                break;
             case HelpControls:
                 _helpDialog?.Open();
                 break;

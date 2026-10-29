@@ -5,8 +5,9 @@ namespace Valence.Probe.Python;
 
 /// <summary>
 /// Built-in Python probe, parsed in-process with tree-sitter (no Python install needed): classes and
-/// files with free functions as nucleons, and bonds from statically resolved names
-/// (see <see cref="PythonAnalyzer"/>). Member-level flow and entry points come later.
+/// files with free functions as nucleons, bonds from statically resolved names, member-level flow,
+/// entry points (scripts, framework routes, signals, tasks, commands, game loops) and outside
+/// effects (see <see cref="PythonAnalyzer"/>).
 /// </summary>
 public sealed class PythonProbe : IProbe
 {

@@ -15,12 +15,7 @@ It never clones, builds, runs, records or writes to the repo.
 4. **Simulation** (static): flow downstream/upstream from a selected class, the game loop
    (frame/physics/draw entry points, repeating), and any other trigger, with pause, speed, heat
    and a trail. Labels appear on zoom, or for the selection and everything connected to it.
-
-## Next
-
-- Godot scene files (`.tscn`): attached scripts and signal connections as wiring.
-- Method-level selection (flow from one method rather than a whole class).
-5. **Tree-sitter engine** (started): `Valence.Syntax` loads tree-sitter and its bundled grammars
+5. **Tree-sitter engine**: `Valence.Syntax` loads tree-sitter and its bundled grammars
    in-process (TreeSitter.DotNet), so new languages need no language runtimes installed. Each
    language adds its own name resolution, plus data-driven *framework packs* (entry points and
    event conventions).
@@ -32,6 +27,17 @@ It never clones, builds, runs, records or writes to the repo.
    DRF routers), signals (`@receiver`, `.connect`), Celery tasks, click/Typer and Django management
    commands, game loops (pygame, arcade, pyglet, Pygame Zero). Framework rules are still in code;
    moving them to data-driven packs comes with the next language.
+7. **Reading aids**: lenses (Risk, Reach, Authors, Trust), the Insights reports, a flow chart of
+   each simulation (live highlight, SVG/PNG/Mermaid export), snapshots and compare, the git timeline.
+8. **Boundary lens**: code that reaches the network, files, processes, environment, databases,
+   native or dynamic code, directly or through calls, now and across the timeline.
+9. **User Guide** in the app (Help ▸ User Guide) and a technical reference for agents.
+
+## Next
+
+- PHP (see AGENTS.md section 9), starting with phase 0: the shared tree-sitter engine pieces.
+- Godot scene files (`.tscn`): attached scripts and signal connections as wiring.
+- Method-level selection (flow from one method rather than a whole class).
 
 ## Languages (planned, roughly in this order)
 

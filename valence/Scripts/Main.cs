@@ -736,11 +736,12 @@ public partial class Main : Node3D
         return null;
     }
 
+    /// <summary>Esc: a running (or finished) simulation stops first; otherwise back out one level of selection.</summary>
     private void Back()
     {
-        if (_selectedNode != null) FocusAtom(_selectedNode.Atom, fly: false);
+        if (_simulation is { Active: true }) StopSimulation();
+        else if (_selectedNode != null) FocusAtom(_selectedNode.Atom, fly: false);
         else if (_focusAtom != null) ClearSelection();
-        else if (_simulation is { Active: true }) StopSimulation();
         else ClearSelection();
     }
 
@@ -1479,10 +1480,6 @@ public partial class Main : Node3D
         ApplyVisibility();
     }
 
-    /// <summary>
-    /// Effective visibility is the most restrictive of the item and its parents (project → system →
-    /// class). Hidden draws nothing (nor its bonds, links, ports, labels or pulses); quiet draws faded.
-    /// </summary>
     /// <summary>During a simulation, what happens to classes/systems the flow hasn't reached yet.</summary>
     private float UntouchedFactor(bool touched)
     {
@@ -1500,6 +1497,10 @@ public partial class Main : Node3D
         if (_simulation is { Active: true }) _hud.SetStatus($"Untouched classes: {mode.ToString().ToLowerInvariant()}");
     }
 
+    /// <summary>
+    /// Effective visibility is the most restrictive of the item and its parents (project → system →
+    /// class). Hidden draws nothing (nor its bonds, links, ports, labels or pulses); quiet draws faded.
+    /// </summary>
     private void ApplyVisibility()
     {
         if (_model == null) return;
@@ -2148,6 +2149,9 @@ public partial class Main : Node3D
                 break;
             case Key.R when command:
                 Reanalyze();
+                break;
+            case Key.F1:
+                _hud.Guide.ShowGuide();
                 break;
             case Key.F11:
             case Key.F when key.CtrlPressed && key.MetaPressed:
